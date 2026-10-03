@@ -15,7 +15,8 @@ SHIMS = {name: (addr, bytes.fromhex(code)) for name, addr, code in MANIFEST['blo
 API = {'count': 0x8009cdf8, 'resid': 0x8009ce0c, 'map': 0x8009d1e8,
        'device': 0x8009d1a0, 'flags': 0x8009cdcc, 'blkno': 0x8009d178,
        'unmap': 0x8009d230, 'error': 0x8009cd90, 'done': 0x8009d5d4,
-       'rw': 0x801e2a3c, 'physio': 0x801d9a48}
+       'rw': 0x801e2a3c, 'uioResid': 0x801e2724, 'offset': 0x801e2a1c,
+       'duplicate': 0x801e2ec8, 'free': 0x801e2c18, 'move': 0x801e25d4, 'update': 0x801e2730}
 # Verified exported symbol values from the reference kernel.
 REG = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3]
 
@@ -26,6 +27,7 @@ class Shims(unittest.TestCase):
         uc.mem_map(0x100000, 0x40000)
         for addr, code in SHIMS.values(): uc.mem_write(addr, code)
         uc.mem_write(0x80097918, b'\x70\x47')
+        uc.mem_write(0x8009791c, b'\x70\x47')
         for address in API.values(): uc.mem_write(address, b'\x70\x47')
         uc.reg_write(UC_ARM_REG_SP, 0x120000)
         uc.reg_write(UC_ARM_REG_LR, 0x110001)
@@ -81,29 +83,48 @@ class Shims(unittest.TestCase):
     def test_host_error(self): self.strategy(0,error=28,processed=0)
     def test_map_failure(self): self.strategy(0,map_error=14)
 
-    def test_raw_device_uses_physio(self):
-        for reading in (True,False):
-            uc=self.machine()
-            uc.mem_map(0x8032b000,4096)
-            uc.mem_write(0x8032b018,struct.pack('<I',512))
-            seen=[]
-            def hook(uc,address,size,user):
-                if address==0x110000:uc.emu_stop()
-                elif address==API['rw']:
-                    self.assertEqual(uc.reg_read(REG[0]),0x130000)
-                    uc.reg_write(REG[0],0 if reading else 1)
-                elif address==API['physio']:
-                    seen.append(address)
-                    self.assertEqual([uc.reg_read(r) for r in REG],[0x800976bd,0,0x02000000,int(reading)])
-                    args=struct.unpack('<III',uc.mem_read(uc.reg_read(UC_ARM_REG_SP),12))
-                    self.assertEqual(args,(0x801d9c15,0x130000,512))
-                    uc.reg_write(REG[0],17)
-            uc.hook_add(UC_HOOK_CODE,hook)
-            uc.reg_write(REG[0],0x02000000);uc.reg_write(REG[1],0x130000)
-            uc.emu_start(SHIMS['raw'][0]|1,0,count=1000)
-            self.assertEqual(len(seen),1)
-            self.assertEqual(uc.reg_read(REG[0]),17)
-            self.assertEqual(uc.reg_read(UC_ARM_REG_SP),0x120000)
+    def raw(self, reading, host_error=0, eof=False):
+        uc=self.machine()
+        uc.mem_map(0x8032b000,4096)
+        uc.mem_write(0x8032b008,struct.pack('<Q',0x40010))
+        offset=(5<<30)+17; remaining=6000; calls=[]; original=0x130000; duplicate=0x131000
+        state={original:[offset,remaining]}
+        def hook(uc,address,size,user):
+            if address==0x110000: uc.emu_stop();return
+            args=[uc.reg_read(r) for r in REG]
+            if address==API['rw']: uc.reg_write(REG[0],0 if reading else 1)
+            elif address==API['uioResid']: uc.reg_write(REG[0],state[args[0]][1])
+            elif address==API['offset']:
+                value=state[args[0]][0];uc.reg_write(REG[0],value&0xffffffff);uc.reg_write(REG[1],value>>32)
+            elif address==API['duplicate']:
+                state[duplicate]=state[original].copy();uc.reg_write(REG[0],duplicate)
+            elif address==API['free']: self.assertEqual(args[0],duplicate)
+            elif address==API['move']:
+                self.assertEqual(args[0:2],[0x80010000,0])
+                self.assertEqual(args[3],original if reading else duplicate)
+                state[args[3]][0]+=args[2];state[args[3]][1]-=args[2]
+                uc.reg_write(REG[0],0)
+            elif address==API['update']:
+                self.assertEqual(args[0],original)
+                state[original][0]+=args[1];state[original][1]-=args[1]
+            elif address==0x8009791c:
+                self.assertEqual(args[0],0x80010000)
+                self.assertEqual(args[2]|args[3]<<32,state[original][0])
+                self.assertEqual(struct.unpack('<II',uc.mem_read(uc.reg_read(UC_ARM_REG_SP),8)),(int(reading),0x02000000))
+                calls.append(args[1]);uc.reg_write(REG[0],host_error);uc.reg_write(REG[1],0 if host_error or eof else args[1])
+        uc.hook_add(UC_HOOK_CODE,hook)
+        uc.reg_write(REG[0],0x02000000);uc.reg_write(REG[1],original)
+        uc.emu_start(SHIMS['raw'][0]|1,0,count=4000)
+        self.assertEqual(uc.reg_read(UC_ARM_REG_PC),0x110000)
+        self.assertEqual(uc.reg_read(REG[0]),host_error)
+        self.assertEqual(uc.reg_read(UC_ARM_REG_SP),0x120000)
+        if host_error or eof:self.assertEqual(state[original],[offset,remaining])
+        else:self.assertEqual(state[original],[offset+remaining,0]);self.assertEqual(calls,[4096,1904])
+
+    def test_raw_read_uses_uiomove_bounce_buffer(self): self.raw(True)
+    def test_raw_write_uses_duplicate_uio_until_commit(self): self.raw(False)
+    def test_raw_error_preserves_uio_position(self): self.raw(False,host_error=28)
+    def test_raw_eof_preserves_uio_position(self): self.raw(True,eof=True)
 
     def test_swift_uses_manifest_bytes(self):
         source=(ROOT/'Podium/Emulator/Storage/GuestDiskBridge.swift').read_text()

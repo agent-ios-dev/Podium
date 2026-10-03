@@ -32,6 +32,8 @@ enum GuestDiskBridge {
         }
         put(strategyCode, at: strategyAddress)
         put(rawCode, at: rawAddress)
+        put(rawLoopCode, at: strategyAddress + 0x100)
+        put("7047", at: transferAddress + 4)
         put("7047", at: transferAddress) // bx lr; native handler supplies the result
         return kernel
     }
@@ -49,6 +51,7 @@ enum GuestDiskBridge {
             }
         }
         cpu.nativeFunctions[transferAddress] = { cpu in transfer(cpu, disk: disk); return true }
+        cpu.nativeFunctions[transferAddress + 4] = { cpu in transferRawPage(cpu, disk: disk); return true }
         cpu.nativeFunctions[ioctlAddress] = { cpu in
             // Other md devices and all unrelated ioctls retain XNU behavior.
             guard cpu.registers[0] & 0x00FF_FFFF == 0 else { return false }
@@ -71,6 +74,37 @@ enum GuestDiskBridge {
             } catch { cpu.registers[0] = UInt32(EFAULT) }
             return true
         }
+    }
+
+    /// Raw character-device I/O uses the reserved md0 page as a bounce
+    /// buffer. XNU's uiomove64, in the guest, copies to/from the uio's
+    /// address space and advances it; host code never dereferences a user
+    /// pointer. r2:r3 is a byte offset, including unaligned raw requests.
+    static func transferRawPage(_ cpu: ARMv7CPU, disk: FileBackedStorage) {
+        let buffer = cpu.registers[0], requested = Int(cpu.registers[1])
+        let offset = UInt64(cpu.registers[2]) | UInt64(cpu.registers[3]) << 32
+        cpu.registers[1] = 0
+        do {
+            let flags = try cpu.readData(cpu.registers.sp, width: 4)
+            let device = try cpu.readData(cpu.registers.sp + 4, width: 4)
+            guard device & 0x00FF_FFFF == 0, requested <= 4096,
+                  buffer & 4095 == 0, offset <= disk.byteCount else { throw FileBackedStorage.IOError(code: EINVAL) }
+            let physical = GuestMemoryLayout.physical(fromKernelVirtual: buffer)
+            guard let pointer = cpu.hostAddress(ofPhysicalRAM: physical) else { throw FileBackedStorage.IOError(code: EFAULT) }
+            let count = Int(min(UInt64(requested), disk.byteCount - offset))
+            if flags & 1 != 0 {
+                let data = try disk.read(at: offset, count: count)
+                if count > 0 {
+                    data.withUnsafeBytes { pointer.copyMemory(from: $0.baseAddress!, byteCount: count) }
+                    cpu.didWritePhysicalRAM(at: physical)
+                }
+            } else {
+                try disk.write(Data(bytes: pointer, count: count), at: offset)
+            }
+            cpu.registers[0] = 0
+            cpu.registers[1] = UInt32(count)
+        } catch let error as FileBackedStorage.IOError { cpu.registers[0] = UInt32(error.code) }
+        catch { cpu.registers[0] = UInt32(EFAULT) }
     }
 
     /// Shim ABI: r0=mapped buffer, r1=count, r2:r3=64-bit block index;
@@ -163,5 +197,6 @@ enum GuestDiskBridge {
 
     // Reproducible shims and annotated disassembly are in StorageBridge/.
     static let strategyCode = "f0b585b0044605f099fb05460146204605f09efb204602a905f088fd00281cd1204605f05ffd0190204605f071fb0090204605f043fd02460b460298294600f00df903900491204605f094fd0499691a204605f07dfb039900e00e21002902d0204605f037fb204605f056ff05b0f0bd"
-    static let rawCode = "20f07f43002b01d0062070472de9f04184b004460d4628464bf1d6fa80f0010347f2bd60c8f209000021224649f61546c8f21d06009601954bf20806c8f232063669029642f1c6fa04b0bde8f081"
+    static let rawCode = "00f0a2b9"
+    static let rawLoopCode = "20f07f43002b01d0062070472de9f04d86b006460c46019620464bf131f9804680f0010000904bf20807c8f232073f683f0307f1804720464af196ff002846dd41f20005a84238bf054620464bf108f902900391b8f1000f22d020464bf156fb824600282fd0384600212a4653464af1d3fe834650464bf1f1f9bbf1000f24d138462946029a039b00f06af8834600291bd020464af16effbbf1000f15d1cae738462946029a039b00f05af800280fd100290cd00a463846002123464af1acfe002805d1b7e70c2002e0584600e0002006b0bde8f08d"
 }

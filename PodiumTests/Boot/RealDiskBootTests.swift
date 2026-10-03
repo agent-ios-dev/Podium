@@ -25,7 +25,9 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertEqual(UInt64(header.totalBlocks) * UInt64(header.blockSize), FileBackedStorage.capacity)
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
-        setenv("PODIUM_DISK_TRACE", "1", 1)
+        if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {
+            setenv("PODIUM_DISK_TRACE", "1", 1)
+        }
         defer { unsetenv("PODIUM_DISK_TRACE") }
         let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true)
         session.start()

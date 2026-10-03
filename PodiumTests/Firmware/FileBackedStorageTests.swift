@@ -169,4 +169,35 @@ final class FileBackedStorageTests: XCTestCase {
         XCTAssertEqual(try GuestDiskBridge.kernelPhysicalAddress(buffer, cpu: cpu), 0x400D_3000)
         XCTAssertThrowsError(try cpu.translatedAddress(buffer, access: .read), "DMA must not replace the task's page tables")
     }
+
+    func testRawBouncePageUsesUnalignedByteOffsetsAboveFourGiB() throws {
+        try withDisk { _, disk in
+            let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x4000_0000)
+            let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.linearMap = (0x8000_0000, 0x4000_0000, 4 << 20)
+            cpu.registers.sp = 0x4000_1000
+            try ram.writeWord32(1, at: cpu.registers.sp)
+            try ram.writeWord32(0, at: cpu.registers.sp + 4)
+            let offset = (UInt64(5) << 30) + 17
+            let payload = Data(repeating: 0xED, count: 1024)
+            try disk.write(payload, at: offset)
+            func request(_ byteOffset: UInt64) {
+                cpu.registers[0] = 0x8000_4000
+                cpu.registers[1] = 1024
+                cpu.registers[2] = UInt32(truncatingIfNeeded: byteOffset)
+                cpu.registers[3] = UInt32(byteOffset >> 32)
+                GuestDiskBridge.transferRawPage(cpu, disk: disk)
+            }
+            request(offset)
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(cpu.registers[1], 1024)
+            XCTAssertEqual(try ram.readBytes(1024, at: 0x4000_4000), payload)
+            try ram.writeWord32(0, at: cpu.registers.sp)
+            request(offset + 123)
+            XCTAssertEqual(try disk.read(at: offset + 123, count: 1024), payload)
+            request(disk.byteCount)
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(cpu.registers[1], 0)
+        }
+    }
 }
