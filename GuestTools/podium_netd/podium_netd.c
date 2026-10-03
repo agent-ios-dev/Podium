@@ -95,13 +95,13 @@ static void probe(void) {
     void *network=dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork",RTLD_LAZY);
     void *(*string)(void*,const char*,unsigned)=dlsym(cf,"CFStringCreateWithCString");
     void *(*urlCreate)(void*,void*,void*)=dlsym(cf,"CFURLCreateWithString");
-    void *(*request)(void*,void*,void*,void*)=dlsym(network,"CFHTTPMessageCreateRequest");
+    void *(*createRequest)(void*,void*,void*,void*)=dlsym(network,"CFHTTPMessageCreateRequest");
     void *(*streamCreate)(void*,void*)=dlsym(network,"CFReadStreamCreateForHTTPRequest");
     unsigned char (*openStream)(void*)=dlsym(cf,"CFReadStreamOpen");
     long (*readStream)(void*,unsigned char*,long)=dlsym(cf,"CFReadStreamRead");
-    if(!cf||!network||!string||!urlCreate||!request||!streamCreate||!openStream||!readStream) { logline("CFNetwork APIs unavailable"); _exit(1); }
+    if(!cf||!network||!string||!urlCreate||!createRequest||!streamCreate||!openStream||!readStream) { logline("CFNetwork APIs unavailable"); _exit(1); }
     void *url=urlCreate(0,string(0,"http://example.com/",0x08000100),0);
-    void *message=request(0,string(0,"GET",0x08000100),url,string(0,"HTTP/1.1",0x08000100));
+    void *message=createRequest(0,string(0,"GET",0x08000100),url,string(0,"HTTP/1.1",0x08000100));
     void *stream=streamCreate(0,message);
     if(!stream||!openStream(stream)) { logline("CFNetwork open failed"); _exit(1); }
     int total=0;

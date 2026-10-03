@@ -111,6 +111,7 @@ enum RootFilesystemPreparer {
     /// Upgrade addons transactionally without erasing the existing guest.
     static func installGuestAddonsIfNeeded(to image: URL) throws {
         guard let signature=JailbreakBootstrap.signature else { return }
+        guard try readHFSPlusVolumeHeader(at:image).catalogFile.logicalSize>0 else { return }
         let builder=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
         guard builder.contains("/Applications/MobileSafari.app/MobileSafari") else { return }
         if builder.contains(JailbreakBootstrap.markerPath),
