@@ -109,6 +109,27 @@ static void probe(void) {
     body[total]=0;
     if(strstr(body,"Example Domain")) logline("CFNetwork fetched Example Domain");
     else logline("CFNetwork page content failed");
+    for(int i=0;i<100 && access("/private/var/lib/podium-cydia-ready",F_OK);++i) sleep(1);
+    void *sbs=dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",RTLD_LAZY);
+    int (*openURL)(void*,char)=dlsym(sbs,"SBSOpenSensitiveURLAndUnlock");
+    void *(*frontmost)(void)=dlsym(sbs,"SBSCopyFrontmostApplicationDisplayIdentifier");
+    unsigned char (*cstring)(void*,char*,long,unsigned)=dlsym(cf,"CFStringGetCString");
+    void (*release)(void*)=dlsym(cf,"CFRelease");
+    if(!openURL||!frontmost||!cstring||!release) { logline("Guest UI launch APIs unavailable"); _exit(1); }
+    const char *urls[]={"http://example.com/","cydia://"};
+    const char *apps[]={"com.apple.mobilesafari","com.saurik.Cydia"};
+    for(int app=0;app<2;++app) {
+        void *target=urlCreate(0,string(0,urls[app],0x08000100),0);
+        openURL(target,1);
+        int found=0;
+        for(int i=0;i<40;++i) {
+            sleep(1); void *identifier=frontmost(); char text[128]={0};
+            if(identifier) { cstring(identifier,text,sizeof(text),0x08000100); release(identifier); }
+            if(!strcmp(text,apps[app])) { found=1; logline(app ? "Cydia foreground" : "Safari foreground"); break; }
+        }
+        if(!found) logline(app ? "Cydia launch failed" : "Safari launch failed");
+        sleep(8);
+    }
     _exit(0);
 }
 int main(void) {

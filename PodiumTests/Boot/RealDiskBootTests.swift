@@ -64,7 +64,7 @@ final class RealDiskBootTests: XCTestCase {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if events.contains("CFNetwork fetched Example Domain") && events.contains("Cydia uicache completed") { break }
+                if events.contains("CFNetwork fetched Example Domain") && events.contains("Cydia foreground") { break }
             }
         }
         // The small kernel ring can overwrite early mount messages before
@@ -74,5 +74,7 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
         XCTAssertTrue(session.guestNetwork.messages.contains("CFNetwork fetched Example Domain"), "Safari's network library must fetch the actual page: \(session.guestNetwork.messages)")
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
     }
 }

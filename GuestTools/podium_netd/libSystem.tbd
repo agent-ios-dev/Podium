@@ -5,5 +5,5 @@ install-name: '/usr/lib/libSystem.B.dylib'
 current-version: 173.8
 exports:
   - targets: [ armv7-ios ]
-    symbols: [ _socket, _ioctl, _connect, _getsockopt, _setsockopt, _close, _read, _write, _fcntl, _usleep, _sleep, _strlen, _strcpy, _strstr, _memset, _memcpy, _memcmp, _inet_pton, _fopen, _fputs, _fclose, _access, _fork, _execl, __exit, _waitpid, _dlopen, _dlsym, _snprintf, _getaddrinfo, _freeaddrinfo, _setuid, _setgid, ___stack_chk_fail, ___stack_chk_guard, ___strcpy_chk, dyld_stub_binder ]
+    symbols: [ _socket, _ioctl, _connect, _getsockopt, _setsockopt, _close, _read, _write, _fcntl, _usleep, _sleep, _strlen, _strcpy, _strstr, _strcmp, _memset, _memcpy, _memcmp, _inet_pton, _fopen, _fputs, _fclose, _access, _fork, _execl, __exit, _waitpid, _dlopen, _dlsym, _snprintf, _getaddrinfo, _freeaddrinfo, _setuid, _setgid, ___stack_chk_fail, ___stack_chk_guard, ___strcpy_chk, dyld_stub_binder ]
 ...
