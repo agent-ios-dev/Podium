@@ -119,6 +119,9 @@ final class S5L8930XPlatform: DeviceEventHandler {
         spi1.slave = touch
         cdma.attach(spi1, dataRegister: Self.spi1Base + S5L8930XSPI.transmitData)
         cdma.attach(spi1, dataRegister: Self.spi1Base + S5L8930XSPI.receiveData)
+        cdma.attach(i2s0, dataRegister: Self.i2s0Base + S5L8930XI2S.transmitData)
+        i2s0.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
+        i2s0.clockChanged = { [unowned self] in self.rescheduleNextEvent() }
         spi1.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
         touch.setAttention = { [unowned self] asserted in
             self.gpio.setInputLevel(!asserted, pin: S5L8930XGPIO.Pin.touchInterrupt)
@@ -190,6 +193,7 @@ final class S5L8930XPlatform: DeviceEventHandler {
     func deviceEventDue(at virtualTime: UInt64) {
         let tick = virtualTime / Self.instructionsPerTimebaseTick
         timer.advance(toTick: tick)
+        i2s0.advance(toTick: tick)
         if tick >= nextFrameTick {
             displayPipe.frameEnded()
             clcd.frameEnded()
@@ -200,6 +204,7 @@ final class S5L8930XPlatform: DeviceEventHandler {
     }
 
     private func rescheduleNextEvent() {
-        cpu.nextDeviceEventAt = min(timer.eventDeadlineTick ?? .max, nextFrameTick) &* Self.instructionsPerTimebaseTick
+        let audioTick = i2s0.isActive ? cpu.virtualTime / Self.instructionsPerTimebaseTick + 24_000 : UInt64.max
+        cpu.nextDeviceEventAt = min(timer.eventDeadlineTick ?? .max, nextFrameTick, audioTick) &* Self.instructionsPerTimebaseTick
     }
 }

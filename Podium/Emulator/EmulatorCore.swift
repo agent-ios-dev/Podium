@@ -63,7 +63,7 @@ final class EmulatorCore {
     private var rateSamples: [(time: Date, retired: UInt64)] = []
 
     init(
-        audioOutput: AudioOutput = NullAudioOutput(),
+        audioOutput: AudioOutput = DeviceAudioOutput(),
         inputController: InputController = PassthroughInputController(),
         persistentGuestStorage: PersistentGuestStorage? = nil
     ) {
@@ -131,10 +131,11 @@ final class EmulatorCore {
                 appendLog("This iOS install was made by an older Podium; erase it in Settings to pick up the newer system image.")
             }
             let rootFilesystem = userImage.url
+            let output = audioOutput
             let session = try await Task.detached(priority: .userInitiated) {
                 let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: fileURL)
                 let deviceTree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: fileURL)
-                return try EmulationSession(kernel: kernel, deviceTree: deviceTree, rootFilesystem: rootFilesystem, persistent: true)
+                return try EmulationSession(kernel: kernel, deviceTree: deviceTree, rootFilesystem: rootFilesystem, persistent: true, audioOutput: output)
             }.value
             session.onFinish = { [weak self, weak session] state in
                 Task { @MainActor in

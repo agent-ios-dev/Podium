@@ -60,11 +60,14 @@ final class DeviceAudioOutput: AudioOutput {
         })
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { [weak self] note in
             let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
             self?.control.async { [weak self] in
                 guard let self else { return }
                 if type == AVAudioSession.InterruptionType.began.rawValue {
                     self.interrupted = true; self.engine?.pause(); self.pcm.clear()
-                } else { self.interrupted = false; self.rebuild() }
+                } else if options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0 {
+                    self.interrupted = false; self.rebuild()
+                }
             }
         })
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { [weak self] _ in
@@ -80,7 +83,7 @@ final class DeviceAudioOutput: AudioOutput {
         }
     }
     func enqueue(samples: [Float]) { pcm.enqueue(samples) }
-    func resume() { control.async { [weak self] in self?.running = true; self?.rebuild() } }
+    func resume() { control.async { [weak self] in self?.running = true; self?.interrupted = false; self?.pcm.clear(); self?.rebuild() } }
     func pause() { control.async { [weak self] in
         guard let self else { return }
         self.running = false; self.engine?.stop(); self.engine = nil; self.pcm.clear()

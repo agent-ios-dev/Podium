@@ -60,6 +60,7 @@ final class EmulationSession {
     let platform: S5L8930XPlatform
     let display: DisplayScanout
     let guestNetwork = GuestNetworkBridge()
+    private let audioOutput: AudioOutput
     private let bus: SegmentedMemoryBus
     /// The physical address space, for diagnostics.
     var memoryBus: MemoryBus { bus }
@@ -96,7 +97,8 @@ final class EmulationSession {
 
     /// `persistent`: the guest's writes to its root filesystem go to the
     /// image file, and last; otherwise every boot starts from the image.
-    init(kernel: Data, deviceTree: Data, rootFilesystem: URL, persistent: Bool = false) throws {
+    init(kernel: Data, deviceTree: Data, rootFilesystem: URL, persistent: Bool = false, audioOutput: AudioOutput = NullAudioOutput()) throws {
+        self.audioOutput = audioOutput
         ram = FlatPhysicalMemory(length: GuestMemoryLayout.ramSize, baseAddress: GuestMemoryLayout.ramPhysicalBase)
         persistentRootFilesystem = persistent
         // A small on-chip SRAM at low physical addresses, separate from
@@ -113,6 +115,9 @@ final class EmulationSession {
         // Devices with real behavior go on the bus before the plain
         // storage KernelBootstrap adds for the other peripheral windows.
         platform = S5L8930XPlatform(cpu: cpu)
+        platform.i2s0.onSamples = { audioOutput.enqueue(samples: $0) }
+        platform.i2s0.onFormat = { audioOutput.configure(sampleRate: $0) }
+        GuestAudioClock.install(on: cpu, i2s: platform.i2s0)
         for region in platform.regions { bus.addRegion(region) }
         display = DisplayScanout(memory: bus, dart: platform.dart2, bootFramebuffer: GuestFramebuffer(
             memory: ram,
@@ -169,6 +174,8 @@ final class EmulationSession {
         runLoopHasStarted = true
         runLoopFinished.enter()
         lock.unlock()
+        audioOutput.configure(sampleRate: platform.i2s0.sampleRate)
+        audioOutput.resume()
         thread.start()
     }
 
@@ -177,6 +184,7 @@ final class EmulationSession {
     /// remains available so the caller can retry before unmapping the disk.
     @discardableResult
     func stop() -> StopResult {
+        audioOutput.pause()
         guestNetwork.stop()
         lock.lock()
         if runLoopHasFinished {
@@ -381,6 +389,7 @@ final class EmulationSession {
     private(set) var sharedCacheSlide: UInt32?
 
     private func runLoop() {
+        defer { audioOutput.pause() }
         var finalState = State.stopped
         while true {
             lock.lock()
