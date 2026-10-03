@@ -23,6 +23,7 @@ final class PacketNetwork: NetworkInterface {
         var sentFIN = false
         var reading = false
         var lastActivity = Date()
+        var window: Int = 32768
         init(_ c: NWConnection, _ s: [UInt8], _ d: [UInt8], _ sp: UInt16, _ dp: UInt16, _ seq: UInt32) {
             connection=c; source=s; destination=d; sourcePort=sp; destinationPort=dp; expected=seq &+ 1
         }
@@ -63,6 +64,7 @@ final class PacketNetwork: NetworkInterface {
         }
         guard let f=flows[key], f.ready else { return }
         f.lastActivity=Date()
+        f.window=Int(Self.u16(p,h+14))
         if flags&0x10 != 0 {
             f.pending.removeAll { Int32(bitPattern:ack &- $0.0)>=0 }
             if !f.established && ack==f.next { f.established=true; receive(f) }
@@ -93,7 +95,10 @@ final class PacketNetwork: NetworkInterface {
     private func flush(_ f: Flow) {
         guard f.established else { return }
         while !f.buffered.isEmpty && f.pending.count<8 {
-            let n=min(1200,f.buffered.count), part=Data(f.buffered.prefix(n)); f.buffered.removeFirst(n)
+            let outstanding=f.pending.reduce(0) { $0+max(0,$1.1.count-40) }
+            let n=min(1200,min(f.buffered.count,max(0,f.window-outstanding)))
+            guard n>0 else { break }
+            let part=Data(f.buffered.prefix(n)); f.buffered.removeFirst(n)
             tcp(f,flags:0x18,body:part)
         }
         if f.ended && f.buffered.isEmpty && !f.sentFIN {

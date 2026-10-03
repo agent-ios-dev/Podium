@@ -43,6 +43,7 @@ final class PacketNetworkTests: XCTestCase {
         p.replaceSubrange(12..<16,with:[10,0,2,15]); p.replaceSubrange(16..<20,with:[127,0,0,1])
         PacketNetwork.put16(&p,2,UInt16(p.count+body.count)); PacketNetwork.put16(&p,20,49152); PacketNetwork.put16(&p,22,port)
         PacketNetwork.put32(&p,24,seq); PacketNetwork.put32(&p,28,ack); p[32]=0x50; p[33]=flags
+        PacketNetwork.put16(&p,34,32768)
         p += body; return Data(p)
     }
 }

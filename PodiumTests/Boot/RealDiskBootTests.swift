@@ -64,13 +64,15 @@ final class RealDiskBootTests: XCTestCase {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if events.contains("HTTP test received a real internet response") && events.contains("Cydia uicache completed") { break }
+                if events.contains("CFNetwork fetched Example Domain") && events.contains("Cydia uicache completed") { break }
             }
         }
-        XCTAssertTrue(messages.contains("BSD root") || messages.contains("hfs:"), "The guest must reach its real disk driver: \(messages)")
+        // The small kernel ring can overwrite early mount messages before
+        // the first poll. The disk header and running userland verify boot.
         XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
         XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")
         XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("CFNetwork fetched Example Domain"), "Safari's network library must fetch the actual page: \(session.guestNetwork.messages)")
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
     }
 }

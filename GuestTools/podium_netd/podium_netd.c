@@ -90,7 +90,26 @@ static void probe(void) {
     const char request[]="GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n";
     write(fd,request,sizeof(request)-1); char body[4096]; int n=read(fd,body,sizeof(body));
     if(n>5 && !memcmp(body,"HTTP/",5)) logline("HTTP test received a real internet response");
-    else logline("HTTP test response failed"); close(fd); _exit(0);
+    else logline("HTTP test response failed"); close(fd);
+    void *cf=dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",RTLD_LAZY);
+    void *network=dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork",RTLD_LAZY);
+    void *(*string)(void*,const char*,unsigned)=dlsym(cf,"CFStringCreateWithCString");
+    void *(*urlCreate)(void*,void*,void*)=dlsym(cf,"CFURLCreateWithString");
+    void *(*request)(void*,void*,void*,void*)=dlsym(network,"CFHTTPMessageCreateRequest");
+    void *(*streamCreate)(void*,void*)=dlsym(network,"CFReadStreamCreateForHTTPRequest");
+    unsigned char (*openStream)(void*)=dlsym(cf,"CFReadStreamOpen");
+    long (*readStream)(void*,unsigned char*,long)=dlsym(cf,"CFReadStreamRead");
+    if(!cf||!network||!string||!urlCreate||!request||!streamCreate||!openStream||!readStream) { logline("CFNetwork APIs unavailable"); _exit(1); }
+    void *url=urlCreate(0,string(0,"http://example.com/",0x08000100),0);
+    void *message=request(0,string(0,"GET",0x08000100),url,string(0,"HTTP/1.1",0x08000100));
+    void *stream=streamCreate(0,message);
+    if(!stream||!openStream(stream)) { logline("CFNetwork open failed"); _exit(1); }
+    int total=0;
+    while(total<(int)sizeof(body)-1 && (n=readStream(stream,(unsigned char*)body+total,sizeof(body)-1-total))>0) total+=n;
+    body[total]=0;
+    if(strstr(body,"Example Domain")) logline("CFNetwork fetched Example Domain");
+    else logline("CFNetwork page content failed");
+    _exit(0);
 }
 int main(void) {
     int tunnel=socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
