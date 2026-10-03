@@ -134,4 +134,39 @@ final class FileBackedStorageTests: XCTestCase {
             XCTAssertThrowsError(try GuestDiskBridge.patch(Data(repeating: 0, count: 64)))
         }
     }
+
+    func testDMAUsesKernelPmapIncludingPendingSoftwareMappings() throws {
+        let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x4000_0000)
+        let cpu = ARMv7CPU(memory: ram, jit: nil)
+        cpu.linearMap = (0x8000_0000, 0x4000_0000, 4 << 20)
+        let activeTable: UInt32 = 0x4002_0000
+        for section in 0..<4 {
+            let virtual = UInt32(0x8000_0000) + UInt32(section << 20)
+            let physical = UInt32(0x4000_0000) + UInt32(section << 20)
+            try ram.writeWord32(physical | 0xC02, at: activeTable + (virtual >> 20) * 4)
+        }
+        cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 2, crm: 0, opc2: 0, value: 0x4001_0000)
+        cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 2, crm: 0, opc2: 1, value: activeTable)
+        cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 2, crm: 0, opc2: 2, value: 1)
+        cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 3, crm: 0, opc2: 0, value: 1)
+        cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 1, crm: 0, opc2: 0, value: 1)
+        func write(_ value: UInt32, _ virtual: UInt32) throws {
+            try ram.writeWord32(value, at: GuestMemoryLayout.physical(fromKernelVirtual: virtual))
+        }
+        let pmap: UInt32 = 0x8002_8000
+        let kernelTable: UInt32 = 0x8003_0000
+        try write(pmap, 0x802D_47E8)
+        try write(kernelTable, pmap)
+        try write(4096, pmap + 0x54)
+        let buffer: UInt32 = 0x000D_3000
+        XCTAssertThrowsError(try cpu.translatedAddress(buffer, access: .read))
+        try write(0x4000_0C02, kernelTable)
+        XCTAssertEqual(try GuestDiskBridge.kernelPhysicalAddress(buffer, cpu: cpu), 0x400D_3000)
+        try write(0x4003_8001, kernelTable)
+        let pte: UInt32 = 0x8003_8000 + ((buffer >> 10) & 0x3FC)
+        let software = ((pte & 0xFFFF_F000) | 0x400) + ((pte >> 2) & 0x3FF) * 12 + 8
+        try write(0x4000_0000, software)
+        XCTAssertEqual(try GuestDiskBridge.kernelPhysicalAddress(buffer, cpu: cpu), 0x400D_3000)
+        XCTAssertThrowsError(try cpu.translatedAddress(buffer, access: .read), "DMA must not replace the task's page tables")
+    }
 }

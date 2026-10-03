@@ -104,7 +104,7 @@ enum GuestDiskBridge {
                 // bcopy_phys), disk I/O writes physical pages. A pinned
                 // I/O buffer can have a read-only CPU mapping; requiring
                 // .write here incorrectly turns that DMA into EFAULT.
-                let physical = try cpu.translatedAddress(address, access: .read)
+                let physical = try kernelPhysicalAddress(address, cpu: cpu)
                 guard let page = cpu.hostAddress(ofPhysicalRAM: physical) else { throw FileBackedStorage.IOError(code: EFAULT) }
                 let pointer = page + Int(physical & 4095)
                 pages.append((pointer, physical, length))
@@ -124,6 +124,41 @@ enum GuestDiskBridge {
         } catch let error as FileBackedStorage.IOError {
             cpu.registers[0] = UInt32(error.code)
         } catch { cpu.registers[0] = UInt32(EFAULT) }
+    }
+
+    /// Mirrors this verified kernel's pmap_find_phys(kernel_pmap, va),
+    /// including its software PTE. DMA must not use the current task's
+    /// TTBR0: the buffer can belong to a different kernel pmap mapping.
+    static func kernelPhysicalAddress(_ address: UInt32, cpu: ARMv7CPU) throws -> UInt32 {
+        let pmap = try cpu.readData(0x802D_47E8, width: 4) // _kernel_pmap
+        // Synthetic CPU tests have no XNU pmap; ordinary translation is
+        // sufficient there. A real initialized kernel always supplies it.
+        if pmap == 0 { return try cpu.translatedAddress(address, access: .read) }
+        let table = try cpu.readData(pmap, width: 4)
+        let entries = try cpu.readData(pmap + 0x54, width: 4)
+        let index = address >> 20
+        guard table != 0, index < entries, entries <= 4096 else { throw FileBackedStorage.IOError(code: EFAULT) }
+        let descriptor = try cpu.readData(table + index * 4, width: 4)
+        switch descriptor & 3 {
+        case 2:
+            if descriptor & 0x40000 != 0 {
+                return (descriptor & 0xFF00_0000) | (address & 0x00FF_FFFF)
+            }
+            return (descriptor & 0xFFF0_0000) | (address & 0x000F_FFFF)
+        case 1:
+            let physicalTable = descriptor & 0xFFFF_FC00
+            let pte = GuestMemoryLayout.kernelVirtual(fromPhysical: physicalTable) + ((address >> 10) & 0x3FC)
+            // XNU stores three software words per hardware PTE after the
+            // 1 KiB hardware table; its third word can encode a pending
+            // mapping before the MMU descriptor has been installed.
+            let software = (pte & 0xFFFF_F000) | 0x400
+            let extended = try cpu.readData(software + ((pte >> 2) & 0x3FF) * 12 + 8, width: 4)
+            let hardware = try cpu.readData(pte, width: 4)
+            let page = extended != 0 ? ((extended ^ address) & 0xFFFF_F000) : (hardware & 0xFFFF_F000)
+            guard page != 0 else { throw FileBackedStorage.IOError(code: EFAULT) }
+            return page | (address & 4095)
+        default: throw FileBackedStorage.IOError(code: EFAULT)
+        }
     }
 
     // Reproducible shims and annotated disassembly are in StorageBridge/.
