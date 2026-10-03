@@ -1,5 +1,6 @@
 import XCTest
 import Darwin
+import UIKit
 @testable import Podium
 
 /// Opt-in integration test. Firmware stays ignored and is never distributed.
@@ -49,12 +50,26 @@ final class RealDiskBootTests: XCTestCase {
         defer { session.stop() }
         var messages = ""
         var lockScreenAppeared = false
+        var captured = Set<String>()
         for second in 0..<180 {
             Thread.sleep(forTimeInterval: 1)
             let text = session.newKernelMessages()
             messages += text
             if !text.isEmpty { print("GUEST: \(text)") }
             let snapshot = session.snapshot()
+            for (event,name) in [("Safari foreground","safari"),("Cydia foreground","cydia")] {
+                if session.guestNetwork.messages.contains(event), !captured.contains(name) {
+                    captured.insert(name)
+                    let display=session.display, width=display.pixelWidth, height=display.pixelHeight
+                    var pixels=Data(count:width*height*4)
+                    pixels.withUnsafeMutableBytes { display.copyCurrentFrame(into:$0) }
+                    let provider=CGDataProvider(data:pixels as CFData)!
+                    let image=CGImage(width:width,height:height,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:width*4,
+                        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:CGImageAlphaInfo.noneSkipFirst.rawValue).union(.byteOrder32Little),
+                        provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent)!
+                    let attachment=XCTAttachment(image:UIImage(cgImage:image)); attachment.name="guest-\(name)"; attachment.lifetime = .keepAlways; add(attachment)
+                }
+            }
             if second % 5 == 0 { print("BOOTTRACE: t=\(second) instructions=\(snapshot.retiredInstructions) JIT=\(snapshot.jitAvailable) state=\(snapshot.state)") }
             guard snapshot.state == .running else {
                 XCTFail("Guest stopped during reference boot: \(snapshot.state); kernel log: \(messages)")
