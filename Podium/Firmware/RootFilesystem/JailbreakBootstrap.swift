@@ -8,10 +8,14 @@ enum JailbreakBootstrap {
     static let markerPath="/private/var/lib/podium-addons"
     static var signature: String? {
         guard let tool=Bundle.main.url(forResource:"podium_netd",withExtension:"bin"),
-              let data=try? Data(contentsOf:tool) else { return nil }
-        return "1:"+SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+              var data=try? Data(contentsOf:tool),
+              let certificate=Bundle.main.url(forResource:"ISRGRootX1",withExtension:"cer"),
+              let certificateData=try? Data(contentsOf:certificate) else { return nil }
+        data.append(certificateData)
+        return "2:"+SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
     }
     static func apply(to builder: RootFilesystemBuilder) throws {
+        try IOSRootCertificateInstaller.apply(to: builder)
         guard builder.contains("/Applications/MobileSafari.app/MobileSafari"),
               let url=Bundle.main.url(forResource:"cydia-bootstrap",withExtension:"zip") else { return }
         let archive=try ZipArchiveReader(fileURL:url)

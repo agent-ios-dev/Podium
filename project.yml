@@ -23,6 +23,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Podium
+    resources:
+      - path: Podium/Resources/ISRGRootX1.cer
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.leviidev.podium
@@ -59,6 +61,8 @@ targets:
           # This diagnostic requires a local IPSW and runs a real guest;
           # it is not part of the firmware-independent unit test suite.
           - Boot/_ManualRealFirmwareVerification.swift
+    resources:
+      - path: Podium/Resources/ISRGRootX1.cer
     dependencies:
       - target: Podium
     settings:
