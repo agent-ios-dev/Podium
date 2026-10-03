@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <dlfcn.h>
+#include <netdb.h>
+#include <sys/time.h>
 
 static unsigned bridge(unsigned op, void *data, unsigned length) {
     register unsigned r0 __asm__("r0") = op;
@@ -34,6 +37,35 @@ static void install_cydia(void) {
     if (!child) { execl("/usr/bin/uicache", "uicache", (char *)0); _exit(1); }
     int status=1; if(child>0) waitpid(child,&status,0);
     if(status==0) { FILE *f=fopen("/private/var/lib/podium-cydia-ready","w"); if(f) fclose(f); logline("Cydia uicache completed"); }
+}
+static void publish(const char *key, const char *xml) {
+    void *cf=dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",RTLD_LAZY);
+    void *sc=dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration",RTLD_LAZY);
+    if(!cf || !sc) { logline("SystemConfiguration unavailable"); return; }
+    void *(*string)(void*,const char*,unsigned)=dlsym(cf,"CFStringCreateWithCString");
+    void *(*data)(void*,const unsigned char*,long)=dlsym(cf,"CFDataCreate");
+    void *(*plist)(void*,void*,unsigned long,void*,void*)=dlsym(cf,"CFPropertyListCreateWithData");
+    void (*release)(void*)=dlsym(cf,"CFRelease");
+    void *(*store)(void*,void*,void*,void*)=dlsym(sc,"SCDynamicStoreCreate");
+    unsigned char (*set)(void*,void*,void*)=dlsym(sc,"SCDynamicStoreSetValue");
+    if(!string||!data||!plist||!release||!store||!set) return;
+    void *name=string(0,"Podium",0x08000100), *k=string(0,key,0x08000100);
+    void *bytes=data(0,(const unsigned char*)xml,strlen(xml)), *value=plist(0,bytes,0,0,0);
+    void *session=store(0,name,0,0);
+    if(session && value && !set(session,k,value)) logline("Network state publication failed");
+    if(session) release(session); if(value) release(value); release(bytes); release(k); release(name);
+}
+static void probe(void) {
+    struct addrinfo hints={0}, *result=0; hints.ai_family=AF_INET; hints.ai_socktype=SOCK_STREAM;
+    if(getaddrinfo("example.com","80",&hints,&result)) { logline("HTTP test DNS failed"); _exit(1); }
+    int fd=socket(AF_INET,SOCK_STREAM,0); struct timeval timeout={20,0};
+    setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    if(connect(fd,result->ai_addr,result->ai_addrlen)) { logline("HTTP test connect failed"); _exit(1); }
+    freeaddrinfo(result);
+    const char request[]="GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n";
+    write(fd,request,sizeof(request)-1); char body[4096]; int n=read(fd,body,sizeof(body));
+    if(n>5 && !memcmp(body,"HTTP/",5)) logline("HTTP test received a real internet response");
+    else logline("HTTP test response failed"); close(fd); _exit(0);
 }
 int main(void) {
     install_cydia();
@@ -62,8 +94,16 @@ int main(void) {
     if(write(routing,&route,sizeof(route))<0) logline("default route failed"); close(routing);
     FILE *resolver=fopen("/private/etc/resolv.conf","w");
     if(resolver) { fputs("nameserver 10.0.2.2\n",resolver); fclose(resolver); }
+    char xml[1024];
+    snprintf(xml,sizeof(xml),"<plist version=\"1.0\"><dict><key>Addresses</key><array><string>10.0.2.15</string></array><key>SubnetMasks</key><array><string>255.255.255.255</string></array><key>Router</key><string>10.0.2.2</string><key>InterfaceName</key><string>%s</string></dict></plist>",name);
+    publish("State:/Network/Service/Podium/IPv4",xml);
+    snprintf(xml,sizeof(xml),"<plist version=\"1.0\"><dict><key>PrimaryInterface</key><string>%s</string><key>PrimaryService</key><string>Podium</string><key>Router</key><string>10.0.2.2</string></dict></plist>",name);
+    publish("State:/Network/Global/IPv4",xml);
+    const char dns[]="<plist version=\"1.0\"><dict><key>ServerAddresses</key><array><string>10.0.2.2</string></array></dict></plist>";
+    publish("State:/Network/Service/Podium/DNS",dns); publish("State:/Network/Global/DNS",dns);
     fcntl(tunnel,F_SETFL,O_NONBLOCK);
     logline("utun configured 10.0.2.15 -> 10.0.2.2");
+    if(bridge(4,0,0) && fork()==0) { sleep(3); probe(); }
     unsigned char packet[65536];
     for(;;) {
         int n; while((n=read(tunnel,packet,sizeof(packet)))>4) bridge(1,packet+4,n-4);

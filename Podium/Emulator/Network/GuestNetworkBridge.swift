@@ -4,7 +4,8 @@ final class GuestNetworkBridge {
     private let network = PacketNetwork()
     private let lock = NSLock()
     private var packets: [Data] = []
-    private(set) var messages: [String] = []
+    private var log: [String] = []
+    var messages: [String] { lock.lock(); defer { lock.unlock() }; return log }
     init() { network.onReceive = { [weak self] packet in
         guard let self else { return }; self.lock.lock(); defer { self.lock.unlock() }
         if self.packets.count<256 { self.packets.append(packet) }
@@ -21,7 +22,7 @@ final class GuestNetworkBridge {
                     var bytes=[UInt8](); bytes.reserveCapacity(count)
                     for i in 0..<count { bytes.append(UInt8(try c.readData(address &+ UInt32(i),width:1))) }
                     if op==1 { self.network.send(Data(bytes)) }
-                    else { let line=String(decoding:bytes,as:UTF8.self); self.lock.lock(); self.messages.append(line); self.lock.unlock(); print("GUESTNET: \(line)") }
+                    else { let line=String(decoding:bytes,as:UTF8.self); self.lock.lock(); if self.log.count<128 { self.log.append(line) }; self.lock.unlock(); print("GUESTNET: \(line)") }
                     return UInt32(count)
                 }
                 if op==2 {
@@ -31,6 +32,7 @@ final class GuestNetworkBridge {
                     for (i,b) in packet.enumerated() { try c.writeData(UInt32(b),address &+ UInt32(i),width:1) }
                     return UInt32(packet.count)
                 }
+                if op==4 { return ProcessInfo.processInfo.environment["PODIUM_NETWORK_TEST"]=="1" ? 1:0 }
             } catch { return 0 }
             return 0
         }

@@ -28,7 +28,8 @@ final class RealDiskBootTests: XCTestCase {
         if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {
             setenv("PODIUM_DISK_TRACE", "1", 1)
         }
-        defer { unsetenv("PODIUM_DISK_TRACE") }
+        setenv("PODIUM_NETWORK_TEST", "1", 1)
+        defer { unsetenv("PODIUM_DISK_TRACE"); unsetenv("PODIUM_NETWORK_TEST") }
         let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true)
         session.start()
         defer { session.stop() }
@@ -48,10 +49,12 @@ final class RealDiskBootTests: XCTestCase {
             if EmulatorCore.lockScreenIsUp(session.display) {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
-                break
+                if session.guestNetwork.messages.contains("HTTP test received a real internet response") { break }
             }
         }
         XCTAssertTrue(messages.contains("BSD root") || messages.contains("hfs:"), "The guest must reach its real disk driver: \(messages)")
         XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
+        XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")
+        XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
     }
 }
