@@ -84,27 +84,26 @@ enum GuestDiskBridge {
             let count = Int(min(UInt64(requested), disk.byteCount - offset))
             guard UInt64(buffer) + UInt64(count) <= UInt64(UInt32.max) + 1 else { throw FileBackedStorage.IOError(code: EFAULT) }
             let reading = flags & 1 != 0 // B_READ
-            var pages: [(pointer: UnsafeMutableRawPointer, count: Int)] = []
+            var pages: [(pointer: UnsafeMutableRawPointer, physical: UInt32, count: Int)] = []
             var checked = 0
             while checked < count {
                 let address = buffer + UInt32(checked)
                 let length = min(4096 - Int(address & 4095), count - checked)
-                guard let pointer = cpu.hostAddress(ofVirtual: address, for: reading ? .write : .read) else {
-                    do {
-                        let physical = try cpu.translatedAddress(address, access: reading ? .write : .read)
-                        print("[md0] I/O buffer VA=\(address.hexString8) PA=\(physical.hexString8) is not backed by RAM")
-                    } catch {
-                        print("[md0] I/O buffer VA=\(address.hexString8) count=\(count) flags=\(flags.hexString8) translation failed: \(error)")
-                    }
-                    throw FileBackedStorage.IOError(code: EFAULT)
-                }
-                pages.append((pointer, length))
+                // Like XNU's original mdPhys path (pmap_find_phys +
+                // bcopy_phys), disk I/O writes physical pages. A pinned
+                // I/O buffer can have a read-only CPU mapping; requiring
+                // .write here incorrectly turns that DMA into EFAULT.
+                let physical = try cpu.translatedAddress(address, access: .read)
+                guard let page = cpu.hostAddress(ofPhysicalRAM: physical) else { throw FileBackedStorage.IOError(code: EFAULT) }
+                let pointer = page + Int(physical & 4095)
+                pages.append((pointer, physical, length))
                 checked += length
             }
             for page in pages {
                 if reading {
                     let data = try disk.read(at: offset + UInt64(done), count: page.count)
                     data.withUnsafeBytes { page.pointer.copyMemory(from: $0.baseAddress!, byteCount: page.count) }
+                    cpu.didWritePhysicalRAM(at: page.physical)
                 } else {
                     try disk.write(Data(bytes: page.pointer, count: page.count), at: offset + UInt64(done))
                 }

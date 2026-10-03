@@ -1144,6 +1144,12 @@ final class ARMv7CPU: CPU {
         codeWriteObserver?.codeWasWritten(physicalPage: physical & 0xFFFF_F000)
     }
 
+    /// DMA bypasses CPU write permissions, but must still discard code
+    /// translated from a physical page whose bytes it replaced.
+    func didWritePhysicalRAM(at physical: UInt32) {
+        noteRAMWrite(physical)
+    }
+
     /// The host address of a page of guest RAM (nil if it isn't RAM).
     func hostAddress(ofPhysicalRAM physical: UInt32) -> UnsafeMutableRawPointer? {
         ramPointer(physical & 0xFFFF_F000, width: 0x1000)

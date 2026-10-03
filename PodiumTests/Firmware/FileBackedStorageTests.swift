@@ -78,6 +78,41 @@ final class FileBackedStorageTests: XCTestCase {
         }
     }
 
+    func testDiskDMAReadsIntoAReadOnlyCPUMapping() throws {
+        try withDisk { _, disk in
+            let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
+            let cpu = ARMv7CPU(memory: ram, jit: nil)
+            let table: UInt32 = 0x8000_4000
+            for section in 0..<4 {
+                let base = UInt32(0x8000_0000) + UInt32(section << 20)
+                let permissions: UInt32 = section == 1 ? 0x8402 : 0xC02
+                try ram.writeWord32(base | permissions, at: table + ((base >> 20) * 4))
+            }
+            try ram.writeWord32(512, at: GuestDiskBridge.md0 + 16)
+            let stack: UInt32 = 0x8000_1000
+            try ram.writeWord32(1, at: stack)
+            try ram.writeWord32(0, at: stack + 4)
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 2, crm: 0, opc2: 0, value: table)
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 3, crm: 0, opc2: 0, value: 1)
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 1, crm: 0, opc2: 0, value: 1)
+            let buffer: UInt32 = 0x8010_3F80
+            XCTAssertThrowsError(try cpu.translatedAddress(buffer, access: .write))
+            let payload = Data(repeating: 0xDB, count: 1024)
+            let offset = UInt64(5) << 30
+            try disk.write(payload, at: offset)
+            cpu.registers.sp = stack
+            cpu.registers[0] = buffer
+            cpu.registers[1] = 1024
+            cpu.registers[2] = UInt32(offset / 512)
+            cpu.registers[3] = 0
+            GuestDiskBridge.transfer(cpu, disk: disk)
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(cpu.registers[1], 1024)
+            XCTAssertEqual(try ram.readBytes(1024, at: buffer), payload)
+            XCTAssertThrowsError(try cpu.translatedAddress(buffer, access: .write), "DMA must not alter CPU page permissions")
+        }
+    }
+
     func testCapacityIoctlsAndUnknownKernelRejection() throws {
         try withDisk { _, disk in
             let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)

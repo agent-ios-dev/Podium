@@ -10,6 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
+      - name: Start simulator while the firmware and app are prepared
+        run: |
+          simulator=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["isAvailable"] and "iPhone" in x["name"]))')
+          xcrun simctl boot "$simulator"
+          echo "BOOT_SIMULATOR=$simulator" >> "$GITHUB_ENV"
       - name: Download reference firmware for this ephemeral test only
         run: |
           mkdir -p .reference-firmware
@@ -18,8 +23,7 @@ jobs:
       - name: Execute actual guest kernel on Apple Silicon
         run: |
           xcodegen generate
-          simulator=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["isAvailable"] and "iPhone" in x["name"]))')
-          xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
+          xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
       - uses: actions/upload-artifact@v4
         if: always()
         with:
