@@ -34,7 +34,7 @@ final class RealDiskBootTests: XCTestCase {
         let upgraded=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
         XCTAssertEqual(String(decoding:try upgraded.contents(of:sentinel),as:UTF8.self),"preserve guest data")
         XCTAssertEqual(String(decoding:try upgraded.contents(of:JailbreakBootstrap.markerPath),as:UTF8.self),JailbreakBootstrap.signature)
-        for path in ["/Applications/Cydia.app/Cydia", "/usr/libexec/cydia/cydo", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/libexec/podium_netd"] {
+        for path in ["/Applications/Cydia.app/Cydia", "/usr/libexec/cydia/cydo", "/usr/lib/libapt-pkg.dylib", "/usr/bin/dpkg", "/usr/libexec/podium_netd"] {
             XCTAssertTrue(upgraded.contains(path),"New guest must contain \(path)")
         }
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
