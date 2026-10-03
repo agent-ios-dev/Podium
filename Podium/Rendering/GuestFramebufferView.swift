@@ -30,6 +30,7 @@ struct GuestFramebufferView: UIViewRepresentable {
 
 final class FramebufferMetalView: UIView {
     var source: FramebufferSource
+    var resolutionDivisor: Int
 
     override class var layerClass: AnyClass { CAMetalLayer.self }
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
