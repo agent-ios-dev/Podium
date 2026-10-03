@@ -8,7 +8,7 @@ on:
         required: false
         default: false
       test_scope:
-        description: Select all tests or only the TrustStore test
+        description: Select all tests or a focused TrustStore check
         type: choice
         required: false
         default: all
@@ -16,6 +16,7 @@ on:
           - all
           - truststore
           - reference-truststore
+          - reference-inventory
 permissions:
   contents: read
 jobs:
@@ -29,7 +30,7 @@ jobs:
       - name: Build unsigned IPA
         run: bash build-8gib-ipa.sh
       - name: Download reference IPSW for real TrustStore verification
-        if: ${{ inputs.run_tests && inputs.test_scope == 'reference-truststore' }}
+        if: ${{ inputs.run_tests && (inputs.test_scope == 'reference-truststore' || inputs.test_scope == 'reference-inventory') }}
         run: |
           mkdir -p .reference-firmware
           curl --fail --location --retry 2 'https://secure-appldnld.apple.com/iOS6.1/031-3211.20140221.Placef/iPod4,1_6.1.6_10B500_Restore.ipsw' -o '.reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw'
@@ -42,6 +43,7 @@ jobs:
           test_args=()
           if [ '${{ inputs.test_scope }}' = truststore ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests); fi
           if [ '${{ inputs.test_scope }}' = reference-truststore ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreInstallation); fi
+          if [ '${{ inputs.test_scope }}' = reference-inventory ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreInventory); fi
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Debug -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath build-tests "${test_args[@]}" CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM='' test
       - uses: actions/upload-artifact@v4
         if: success()

@@ -6,6 +6,33 @@ import SwiftUI
 
 /// Opt-in integration test. Firmware stays ignored and is never distributed.
 final class RealDiskBootTests: XCTestCase {
+    func testReferenceFirmwareTrustStoreInventory() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let ipsw = repo.appendingPathComponent(".reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw")
+        guard FileManager.default.fileExists(atPath: ipsw.path) else {
+            throw XCTSkip("Real firmware TrustStore inventory requires the reference IPSW.")
+        }
+        let decrypted = ipsw.deletingPathExtension().appendingPathExtension("truststore-inventory.dmg")
+        defer { try? FileManager.default.removeItem(at: decrypted) }
+        try RootFilesystemPreparer.decryptRootFilesystem(fromFirmwareAt: ipsw, to: decrypted)
+        let volume = try HFSPlusVolume(source: UDIFDiskImage(url: decrypted))
+        let builder = try RootFilesystemBuilder(volume: volume)
+        let paths = ["/private", "/private/var", "/private/var/Keychains", "/var",
+                     "/System/Library/Frameworks/Security.framework", "/System/Library/Keychains"]
+        for path in paths {
+            if builder.isFolder(at: path) {
+                let names = try builder.children(of: path).map(\.name)
+                print("TRUSTSTORE INVENTORY \(path): \(names.filter { $0.localizedCaseInsensitiveContains("trust") || $0.localizedCaseInsensitiveContains("keychain") || $0.localizedCaseInsensitiveContains("cert") })")
+            } else {
+                print("TRUSTSTORE INVENTORY \(path): absent")
+            }
+        }
+        for path in IOSRootCertificateInstaller.supportedTrustStorePaths {
+            print("TRUSTSTORE INVENTORY candidate \(path): \(builder.contains(path))")
+        }
+    }
+
     func testReferenceFirmwareTrustStoreInstallation() throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
