@@ -1,6 +1,7 @@
 import XCTest
 import Darwin
 import UIKit
+import SwiftUI
 @testable import Podium
 
 /// Opt-in integration test. Firmware stays ignored and is never distributed.
@@ -75,6 +76,24 @@ final class RealDiskBootTests: XCTestCase {
                         space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:CGImageAlphaInfo.noneSkipFirst.rawValue).union(.byteOrder32Little),
                         provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent)!
                     let attachment=XCTAttachment(image:UIImage(cgImage:image)); attachment.name="guest-\(name)"; attachment.lifetime = .keepAlways; add(attachment)
+                    if name == "cydia" {
+                        let guest = UIImage(cgImage: image)
+                        let render = {
+                            MainActor.assumeIsolated {
+                                let view = ClassicIPodCase(width: 300, onEvent: { _ in }) { _ in
+                                    Image(uiImage: guest).resizable()
+                                }
+                                let renderer = ImageRenderer(content: view)
+                                renderer.scale = 2
+                                return renderer.uiImage
+                            }
+                        }
+                        let preview = Thread.isMainThread ? render() : DispatchQueue.main.sync(execute: render)
+                        if let preview {
+                            let attachment = XCTAttachment(image: preview)
+                            attachment.name = "classic-ipod-case"; attachment.lifetime = .keepAlways; add(attachment)
+                        }
+                    }
                 }
             }
             if second % 5 == 0 { print("BOOTTRACE: t=\(second) instructions=\(snapshot.retiredInstructions) JIT=\(snapshot.jitAvailable) state=\(snapshot.state)") }
