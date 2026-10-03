@@ -69,6 +69,15 @@ final class GuestDiskShimExecutionTests: XCTestCase {
         cpu.cpsr.thumbState = true
         cpu.breakpoints = [0x8000_5000]
         if translated {
+            // A real guest callee with its own frame, like XNU's buf_map.
+            // A native mock alone cannot catch JIT stack/frame mistakes.
+            // push {r4,r5,r7,lr}; add r7,sp,#8; sub sp,#4;
+            // mov r5,r0; mov r4,r1; ldr r0,[r5,#60]; str r0,[r4];
+            // movs r0,#0; add sp,#4; pop {r4,r5,r7,pc}.
+            try ram.writeBytes(Data(hex: "b0b502af81b005460c46e86b2060002001b0b0bd"), at: 0x8009_D1E8)
+            try ram.writeWord32(buffer, at: bufferObject + 60)
+            cpu.nativeFunctions.removeValue(forKey: 0x8009_D1E8)
+            mapped = true
             let table: UInt32 = 0x8002_0000
             for section in 0..<4 {
                 let base = UInt32(0x8000_0000) + UInt32(section << 20)
