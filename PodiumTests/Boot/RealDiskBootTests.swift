@@ -51,6 +51,7 @@ final class RealDiskBootTests: XCTestCase {
         var messages = ""
         var lockScreenAppeared = false
         var captured = Set<String>()
+        var firstSeen = [String:Int]()
         for second in 0..<180 {
             Thread.sleep(forTimeInterval: 1)
             let text = session.newKernelMessages()
@@ -58,7 +59,8 @@ final class RealDiskBootTests: XCTestCase {
             if !text.isEmpty { print("GUEST: \(text)") }
             let snapshot = session.snapshot()
             for (event,name) in [("Safari foreground","safari"),("Cydia foreground","cydia")] {
-                if session.guestNetwork.messages.contains(event), !captured.contains(name) {
+                if session.guestNetwork.messages.contains(event), firstSeen[name]==nil { firstSeen[name]=second }
+                if let appeared=firstSeen[name], second-appeared>=4, !captured.contains(name) {
                     captured.insert(name)
                     let display=session.display, width=display.pixelWidth, height=display.pixelHeight
                     var pixels=Data(count:width*height*4)
@@ -79,7 +81,7 @@ final class RealDiskBootTests: XCTestCase {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if events.contains("CFNetwork fetched Example Domain") && events.contains("Cydia foreground") { break }
+                if events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") { break }
             }
         }
         // The small kernel ring can overwrite early mount messages before

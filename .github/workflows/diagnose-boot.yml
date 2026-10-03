@@ -31,9 +31,15 @@ jobs:
           zsh GuestTools/podium_netd/build.sh
           xcodegen generate
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -only-testing:PodiumTests/GuestDiskShimExecutionTests -only-testing:PodiumTests/FileBackedStorageTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
+      - name: Export guest display evidence
+        if: always()
+        run: |
+          if [ -d boot-result.xcresult ]; then xcrun xcresulttool export attachments --path boot-result.xcresult --output-path boot-attachments; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: boot-diagnostics
-          path: boot-result.xcresult
+          path: |
+            boot-result.xcresult
+            boot-attachments
           retention-days: 3
