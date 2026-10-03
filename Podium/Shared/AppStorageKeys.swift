@@ -4,6 +4,7 @@ import Foundation
 /// (e.g. Settings and Firmware) can't drift apart via a typo.
 enum AppStorageKeys {
     static let appearance = "podium.appearance"
+    static let iPodCase = "podium.iPodCase"
     static let confirmBeforeDeletingFirmware = "podium.confirmBeforeDeletingFirmware"
     static let showDeveloperSettings = "podium.showDeveloperSettings"
     static let showFrameRate = "podium.showFrameRate"

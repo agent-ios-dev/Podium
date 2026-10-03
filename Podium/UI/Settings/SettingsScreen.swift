@@ -18,6 +18,7 @@ struct SettingsScreen: View {
     @State private var guestFileStatus: String?
 
     @AppStorage(AppStorageKeys.appearance) private var appearanceRawValue = AppearanceOption.dark.rawValue
+    @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
     @AppStorage(AppStorageKeys.confirmBeforeDeletingFirmware) private var confirmBeforeDeleting = true
     @AppStorage(AppStorageKeys.showDeveloperSettings) private var showDeveloperSettings = false
 
@@ -145,6 +146,15 @@ struct SettingsScreen: View {
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
+                        }
+
+                        cardDivider
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Toggle("Корпус iPod", isOn: $iPodCase)
+                            Text("Классический чёрный корпус с кнопкой Home вокруг экрана iPod.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         cardDivider

@@ -4,6 +4,7 @@ struct EmulatorScreen: View {
     @Environment(FirmwareLibrary.self) private var firmwareLibrary
     @Environment(EmulatorCore.self) private var emulatorCore
     @State private var touchActive = false
+    @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
 
     private var firmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
@@ -26,30 +27,34 @@ struct EmulatorScreen: View {
                 Spacer(minLength: 12)
 
                 GeometryReader { displayProxy in
-                    let displayHeight = min(displayProxy.size.height, displayProxy.size.width * 1.5)
-                    let displayWidth = displayHeight / 1.5
-
-                    screen
-                        .frame(width: displayWidth, height: displayHeight)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .contentShape(Rectangle())
-                        .gesture(touchGesture(in: CGSize(width: displayWidth, height: displayHeight)))
+                    if iPodCase {
+                        let width = max(1, min(displayProxy.size.width - 12, (displayProxy.size.height - 8) / 2))
+                        ClassicIPodCase(width: width, onEvent: sendControl) { size in
+                            screen
+                                .contentShape(Rectangle())
+                                .gesture(touchGesture(in: size))
+                        }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        let displayHeight = min(displayProxy.size.height, displayProxy.size.width * 1.5)
+                        let displayWidth = displayHeight / 1.5
+                        screen
+                            .frame(width: displayWidth, height: displayHeight)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .contentShape(Rectangle())
+                            .gesture(touchGesture(in: CGSize(width: displayWidth, height: displayHeight)))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
-                .frame(maxHeight: min(geometry.size.height * 0.68, 610))
+                .frame(maxHeight: iPodCase ? geometry.size.height * 0.84 : min(geometry.size.height * 0.68, 610))
 
                 deviceDescription
                     .padding(.top, 18)
 
                 Spacer(minLength: 20)
 
-                EmulatorControlBar { event in
-                    if case .powerButton(pressed: true) = event, !emulatorCore.isPoweredOn, emulatorCore.bootStage == nil, let firmware {
-                        powerOn(firmware)
-                    } else {
-                        emulatorCore.sendInput(event)
-                    }
-                }
+                if !iPodCase {
+                EmulatorControlBar(onEvent: sendControl)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
                 .background(Color(.secondarySystemBackground), in: Capsule())
@@ -58,6 +63,7 @@ struct EmulatorScreen: View {
                         .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
                 }
                 .padding(.bottom, max(geometry.safeAreaInsets.bottom == 0 ? 18 : 8, 8))
+                }
             }
             .padding(.horizontal, 28)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -130,6 +136,12 @@ struct EmulatorScreen: View {
         Task {
             await emulatorCore.powerOn(firmware: firmware, storedAt: firmwareLibrary.fileURL(for: firmware))
         }
+    }
+
+    private func sendControl(_ event: InputEvent) {
+        if case .powerButton(pressed: true) = event, !emulatorCore.isPoweredOn, emulatorCore.bootStage == nil, let firmware {
+            powerOn(firmware)
+        } else { emulatorCore.sendInput(event) }
     }
 
     /// One finger on the virtual touchscreen: down, moves, up.
