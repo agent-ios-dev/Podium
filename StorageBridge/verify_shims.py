@@ -16,7 +16,8 @@ API = {'count': 0x8009cdf8, 'resid': 0x8009ce0c, 'map': 0x8009d1e8,
        'device': 0x8009d1a0, 'flags': 0x8009cdcc, 'blkno': 0x8009d178,
        'unmap': 0x8009d230, 'error': 0x8009cd90, 'done': 0x8009d5d4,
        'rw': 0x801e2a3c, 'uioResid': 0x801e2724, 'offset': 0x801e2a1c,
-       'duplicate': 0x801e2ec8, 'free': 0x801e2c18, 'move': 0x801e25d4, 'update': 0x801e2730}
+       'duplicate': 0x801e2ec8, 'free': 0x801e2c18, 'move': 0x801e25d4, 'update': 0x801e2730,
+       'alloc': 0x8001ccec, 'dealloc': 0x8001ccfc}
 # Verified exported symbol values from the reference kernel.
 REG = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3]
 
@@ -92,7 +93,11 @@ class Shims(unittest.TestCase):
         def hook(uc,address,size,user):
             if address==0x110000: uc.emu_stop();return
             args=[uc.reg_read(r) for r in REG]
-            if address==API['rw']: uc.reg_write(REG[0],0 if reading else 1)
+            if address==API['alloc']:
+                self.assertEqual(args[0],4096);uc.reg_write(REG[0],0x80010000)
+            elif address==API['dealloc']:
+                self.assertEqual(args[:2],[0x80010000,4096])
+            elif address==API['rw']: uc.reg_write(REG[0],0 if reading else 1)
             elif address==API['uioResid']: uc.reg_write(REG[0],state[args[0]][1])
             elif address==API['offset']:
                 value=state[args[0]][0];uc.reg_write(REG[0],value&0xffffffff);uc.reg_write(REG[1],value>>32)

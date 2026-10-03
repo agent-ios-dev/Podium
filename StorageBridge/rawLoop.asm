@@ -15,11 +15,11 @@ bl 0x801e2a3c
 mov r8,r0
 eor r0,r0,#1
 str r0,[sp]
-movw r7,#0xb008
-movt r7,#0x8032
-ldr r7,[r7]
-lsls r7,r7,#12
-add.w r7,r7,#0x40000000
+movw r0,#4096
+bl 0x8001ccec
+mov r7,r0
+cmp r0,#0
+beq no_memory
 again:
 mov r0,r4
 bl 0x801e2724
@@ -90,5 +90,13 @@ b finish
 success:
 movs r0,#0
 finish:
+mov r11,r0
+cmp r7,#0
+beq no_free
+mov r0,r7
+movw r1,#4096
+bl 0x8001ccfc
+no_free:
+mov r0,r11
 add sp,sp,#24
 pop {r4,r5,r6,r7,r8,r10,r11,pc}

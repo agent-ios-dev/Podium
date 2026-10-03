@@ -76,7 +76,7 @@ enum GuestDiskBridge {
         }
     }
 
-    /// Raw character-device I/O uses the reserved md0 page as a bounce
+    /// Raw character-device I/O uses one kalloc page per call as a bounce
     /// buffer. XNU's uiomove64, in the guest, copies to/from the uio's
     /// address space and advances it; host code never dereferences a user
     /// pointer. r2:r3 is a byte offset, including unaligned raw requests.
@@ -89,7 +89,9 @@ enum GuestDiskBridge {
             let device = try cpu.readData(cpu.registers.sp + 4, width: 4)
             guard device & 0x00FF_FFFF == 0, requested <= 4096,
                   buffer & 4095 == 0, offset <= disk.byteCount else { throw FileBackedStorage.IOError(code: EINVAL) }
-            let physical = GuestMemoryLayout.physical(fromKernelVirtual: buffer)
+            let physical: UInt32
+            if cpu.mmuEnabled { physical = try kernelPhysicalAddress(buffer, cpu: cpu) }
+            else { physical = GuestMemoryLayout.physical(fromKernelVirtual: buffer) }
             guard let pointer = cpu.hostAddress(ofPhysicalRAM: physical) else { throw FileBackedStorage.IOError(code: EFAULT) }
             let count = Int(min(UInt64(requested), disk.byteCount - offset))
             if flags & 1 != 0 {
@@ -198,5 +200,5 @@ enum GuestDiskBridge {
     // Reproducible shims and annotated disassembly are in StorageBridge/.
     static let strategyCode = "f0b585b0044605f099fb05460146204605f09efb204602a905f088fd00281cd1204605f05ffd0190204605f071fb0090204605f043fd02460b460298294600f00df903900491204605f094fd0499691a204605f07dfb039900e00e21002902d0204605f037fb204605f056ff05b0f0bd"
     static let rawCode = "00f0a2b9"
-    static let rawLoopCode = "20f07f43002b01d0062070472de9f04d86b006460c46019620464bf131f9804680f0010000904bf20807c8f232073f683f0307f1804720464af196ff002846dd41f20005a84238bf054620464bf108f902900391b8f1000f22d020464bf156fb824600282fd0384600212a4653464af1d3fe834650464bf1f1f9bbf1000f24d138462946029a039b00f06af8834600291bd020464af16effbbf1000f15d1cae738462946029a039b00f05af800280fd100290cd00a463846002123464af1acfe002805d1b7e70c2002e0584600e0002006b0bde8f08d"
+    static let rawLoopCode = "20f07f43002b01d0062070472de9f04d86b006460c46019620464bf131f9804680f00100009041f2000085f781fa0746002847d020464af197ff002846dd41f20005a84238bf054620464bf109f902900391b8f1000f22d020464bf157fb824600282fd0384600212a4653464af1d4fe834650464bf1f2f9bbf1000f24d138462946029a039b00f06bf8834600291bd020464af16fffbbf1000f15d1cae738462946029a039b00f05bf800280fd100290cd00a463846002123464af1adfe002805d1b7e70c2002e0584600e000208346002f04d0384641f2000185f731fa584606b0bde8f08d"
 }
