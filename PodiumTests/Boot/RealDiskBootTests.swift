@@ -46,6 +46,10 @@ final class RealDiskBootTests: XCTestCase {
         setenv("PODIUM_NETWORK_TEST", "1", 1)
         defer { unsetenv("PODIUM_DISK_TRACE"); unsetenv("PODIUM_NETWORK_TEST") }
         let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true)
+        session.platform.i2s0.traceAccess = { print("AUDIOTRACE: \($0)") }
+        session.platform.cdma.log = { line in
+            if line.contains("peripheral") || line.contains("started") { print("AUDIOTRACE: \(line)") }
+        }
         session.start()
         defer { session.stop() }
         var messages = ""

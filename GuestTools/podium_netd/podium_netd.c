@@ -132,6 +132,27 @@ static void probe(void) {
     }
     _exit(0);
 }
+static void audio_probe(void) {
+    sleep(15);
+    void *cf=dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",RTLD_LAZY);
+    void *at=dlopen("/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox",RTLD_LAZY);
+    void *(*fileURL)(void*,const unsigned char*,long,int)=dlsym(cf,"CFURLCreateFromFileSystemRepresentation");
+    int (*createSound)(void*,unsigned int*)=dlsym(at,"AudioServicesCreateSystemSoundID");
+    void (*playSound)(unsigned int)=dlsym(at,"AudioServicesPlaySystemSound");
+    if(!fileURL||!createSound||!playSound) { logline("Audio APIs unavailable"); _exit(1); }
+    const char *path="/private/var/tmp/podium-audio-test.wav";
+    FILE *f=fopen(path,"wb");
+    if(!f) _exit(1);
+    unsigned int header[]={0x46464952,36+44100*4,0x45564157,0x20746d66,16,0x00020001,44100,44100*4,0x00100004,0x61746164,44100*4};
+    fwrite(header,sizeof(header),1,f);
+    for(int i=0;i<44100;++i) { short pair[2]={((i/50)&1)?3000:-3000,((i/50)&1)?3000:-3000}; fwrite(pair,sizeof(pair),1,f); }
+    fclose(f);
+    unsigned int sound=0;
+    int status=createSound(fileURL(0,(const unsigned char*)path,strlen(path),0),&sound);
+    char msg[128]; snprintf(msg,sizeof(msg),"Audio create status %d sound %u",status,sound); logline(msg);
+    for(int i=0;i<3&&status==0;++i) { playSound(sound); logline("Audio test playback requested"); sleep(8); }
+    _exit(0);
+}
 int main(void) {
     int tunnel=socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
     struct ctl_info info={0}; strcpy(info.ctl_name,"com.apple.net.utun_control");
@@ -169,6 +190,7 @@ int main(void) {
     logline("utun configured 10.0.2.15 -> 10.0.2.2");
     if(fork()==0) { sleep(10); install_cydia(); _exit(0); }
     if(bridge(4,0,0) && fork()==0) { sleep(3); probe(); }
+    if(bridge(4,0,0) && fork()==0) { audio_probe(); }
     unsigned char packet[65536];
     for(;;) {
         int n; while((n=read(tunnel,packet,sizeof(packet)))>4) bridge(1,packet+4,n-4);

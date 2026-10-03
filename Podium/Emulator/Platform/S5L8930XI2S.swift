@@ -15,6 +15,7 @@ final class S5L8930XI2S: MMIODevice {
     static let controlChannelIdle: UInt32 = 1 << 1
 
     private var registers = [UInt32](repeating: 0, count: Int(windowLength / 4))
+    var traceAccess: ((String) -> Void)?
 
     func readRegister(at offset: UInt32) -> UInt32 {
         let value = registers[Int(offset / 4)]
@@ -22,6 +23,7 @@ final class S5L8930XI2S: MMIODevice {
     }
 
     func writeRegister(_ value: UInt32, at offset: UInt32) {
+        traceAccess?(String(format: "I2S W %03x = %08x", offset, value))
         registers[Int(offset / 4)] = value
     }
 }
