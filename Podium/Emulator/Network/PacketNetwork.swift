@@ -39,6 +39,11 @@ final class PacketNetwork: NetworkInterface {
             guard Int(Self.u16(p,h+4))>=8, h+Int(Self.u16(p,h+4))<=size else { return }
             let body=Array(p[(h+8)..<(h+Int(Self.u16(p,h+4)))])
             if dp==53 { dns(body,s,d,sp,dp); return }
+            // iOS 6's automatic date setting uses SNTP/NTP. Forwarding
+            // arbitrary UDP is unreliable on some host networks, so answer
+            // time queries from the host clock directly. This also gives
+            // certificate validation a real calendar date from first boot.
+            if dp==123 { ntp(body,s,d,sp,dp); return }
             let c=NWConnection(host: NWEndpoint.Host(d.map(String.init).joined(separator:".")), port: NWEndpoint.Port(rawValue:dp)!, using:.udp)
             c.stateUpdateHandler = { state in if case .ready=state { c.send(content:Data(body),completion:.contentProcessed { _ in }); c.receiveMessage { data,_,_,_ in if let data { self.udp([UInt8](data),s,d,sp,dp) }; c.stateUpdateHandler=nil; c.cancel() } } }
             c.start(queue:queue); queue.asyncAfter(deadline:.now()+15) { c.stateUpdateHandler=nil; c.cancel() }; return
@@ -135,6 +140,24 @@ final class PacketNetwork: NetworkInterface {
         guard body.count<65000 else { return }; var t=[UInt8](repeating:0,count:8)
         Self.put16(&t,0,dp); Self.put16(&t,2,sp); Self.put16(&t,4,UInt16(body.count+8)); t += body
         onReceive?(ip(t,proto:17,source:d,destination:s))
+    }
+    private func ntp(_ query: [UInt8],_ s: [UInt8],_ d: [UInt8],_ sp: UInt16,_ dp: UInt16) {
+        guard query.count>=48, query[0] & 7 == 3 else { return } // client request
+        var response=[UInt8](repeating:0,count:48)
+        response[0]=0x24 // LI=0, version=4, server mode
+        response[1]=1    // synchronized primary server
+        response[2]=4
+        response[3]=0xEC // reasonable precision
+        response.replaceSubrange(12..<16, with:Array("PODI".utf8))
+        response.replaceSubrange(24..<32, with:query[40..<48]) // originate timestamp
+        let unix=Date().timeIntervalSince1970
+        let seconds=UInt32(max(0, unix) + 2_208_988_800)
+        let fraction=UInt32(((unix - floor(unix)) * 4_294_967_296).rounded(.down))
+        for offset in [32,40] {
+            Self.put32(&response,offset,seconds)
+            Self.put32(&response,offset+4,fraction)
+        }
+        udp(response,s,d,sp,dp)
     }
     private func dns(_ q: [UInt8],_ s: [UInt8],_ d: [UInt8],_ sp: UInt16,_ dp: UInt16) {
         guard q.count>=17, Self.u16(q,4)==1 else { return }; var i=12; var labels=[String]()
