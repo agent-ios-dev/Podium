@@ -6,6 +6,24 @@ import SwiftUI
 
 /// Opt-in integration test. Firmware stays ignored and is never distributed.
 final class RealDiskBootTests: XCTestCase {
+    func testReferenceFirmwareTrustStoreInstallation() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let ipsw = repo.appendingPathComponent(".reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw")
+        guard FileManager.default.fileExists(atPath: ipsw.path) else {
+            throw XCTSkip("Real firmware TrustStore verification requires the reference IPSW.")
+        }
+        let keybag = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "keybag_bootstrap", withExtension: "bin")))
+        let sync = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "podium_syncd", withExtension: "bin")))
+        let state = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "first_boot_state", withExtension: "plist")))
+        let readFiles = try String(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "boot_read_files", withExtension: "txt")), encoding: .utf8)
+        let image = try RootFilesystemPreparer.prepare(firmwareAt: ipsw, keybagBootstrap: [UInt8](keybag),
+            syncDaemon: [UInt8](sync), firstBootState: state, bootReadFiles: RootFilesystemRecipe.fileList(readFiles))
+        let builder = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
+        XCTAssertTrue(builder.contains(IOSRootCertificateInstaller.trustStorePath), "The reference iOS 6 root filesystem must contain its TrustStore")
+        XCTAssertFalse(try IOSRootCertificateInstaller.apply(to: builder), "The prepared TrustStore must already contain the verified ISRG Root X1 record")
+    }
+
     func testReferenceFirmwareBootWithFileBackedDisk() throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()

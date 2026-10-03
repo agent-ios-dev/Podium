@@ -15,6 +15,7 @@ on:
         options:
           - all
           - truststore
+          - reference-truststore
 permissions:
   contents: read
 jobs:
@@ -27,6 +28,12 @@ jobs:
         run: brew install xcodegen
       - name: Build unsigned IPA
         run: bash build-8gib-ipa.sh
+      - name: Download reference IPSW for real TrustStore verification
+        if: ${{ inputs.run_tests && inputs.test_scope == 'reference-truststore' }}
+        run: |
+          mkdir -p .reference-firmware
+          curl --fail --location --retry 2 'https://secure-appldnld.apple.com/iOS6.1/031-3211.20140221.Placef/iPod4,1_6.1.6_10B500_Restore.ipsw' -o '.reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw'
+          printf '%s  %s\n' '1f6096c3298c87172f431e4924a4cf3c53298e5920f4b6c817929aa32d90c5ff' '.reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw' | shasum -a 256 -c -
       - name: Execute simulator tests
         if: ${{ inputs.run_tests }}
         shell: bash
@@ -34,6 +41,7 @@ jobs:
           simulator=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["isAvailable"] and "iPhone" in x["name"]))')
           test_args=()
           if [ '${{ inputs.test_scope }}' = truststore ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests); fi
+          if [ '${{ inputs.test_scope }}' = reference-truststore ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreInstallation); fi
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Debug -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath build-tests "${test_args[@]}" CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM='' test
       - uses: actions/upload-artifact@v4
         if: success()

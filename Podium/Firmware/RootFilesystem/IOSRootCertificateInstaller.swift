@@ -18,6 +18,12 @@ enum IOSRootCertificateInstaller {
     </plist>
     """.utf8)
 
+    private static var bundledCertificateURL: URL? {
+        ([Bundle.main] + Bundle.allBundles + Bundle.allFrameworks)
+            .first { $0.url(forResource: "ISRGRootX1", withExtension: "cer") != nil }?
+            .url(forResource: "ISRGRootX1", withExtension: "cer")
+    }
+
     enum InstallError: Error, CustomStringConvertible {
         case missingCertificate
         case wrongCertificate
@@ -40,7 +46,7 @@ enum IOSRootCertificateInstaller {
     /// edited in a temporary file before its bytes replace the HFS+ file.
     @discardableResult
     static func apply(to builder: RootFilesystemBuilder) throws -> Bool {
-        guard let certificateURL = Bundle.main.url(forResource: "ISRGRootX1", withExtension: "cer") else {
+        guard let certificateURL = bundledCertificateURL else {
             throw InstallError.missingCertificate
         }
         let certificate = try Data(contentsOf: certificateURL)
