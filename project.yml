@@ -62,7 +62,7 @@ targets:
           # it is not part of the firmware-independent unit test suite.
           - Boot/_ManualRealFirmwareVerification.swift
     resources:
-      - path: Podium/Resources/ISRGRootX1.cer
+      - path: PodiumTests/Resources/ISRGRootX1.cer
     dependencies:
       - target: Podium
     settings:
