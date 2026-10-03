@@ -28,6 +28,7 @@ jobs:
           printf '%s  %s\n' '1f6096c3298c87172f431e4924a4cf3c53298e5920f4b6c817929aa32d90c5ff' '.reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw' | shasum -a 256 -c -
       - name: Execute actual guest kernel on Apple Silicon
         run: |
+          zsh GuestTools/podium_netd/build.sh
           xcodegen generate
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -only-testing:PodiumTests/GuestDiskShimExecutionTests -only-testing:PodiumTests/FileBackedStorageTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
       - uses: actions/upload-artifact@v4

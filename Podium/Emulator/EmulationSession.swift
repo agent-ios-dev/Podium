@@ -59,6 +59,7 @@ final class EmulationSession {
     let cpu: ARMv7CPU
     let platform: S5L8930XPlatform
     let display: DisplayScanout
+    let guestNetwork = GuestNetworkBridge()
     private let bus: SegmentedMemoryBus
     /// The physical address space, for diagnostics.
     var memoryBus: MemoryBus { bus }
@@ -108,6 +109,7 @@ final class EmulationSession {
         cpu = ARMv7CPU(memory: bus, jit: nil)
         cpu.linearMap = (GuestMemoryLayout.kernelVirtualBase, GuestMemoryLayout.ramPhysicalBase, UInt32(GuestMemoryLayout.ramSize))
         GuestAccommodations.install(on: cpu)
+        guestNetwork.install(on: cpu)
         // Devices with real behavior go on the bus before the plain
         // storage KernelBootstrap adds for the other peripheral windows.
         platform = S5L8930XPlatform(cpu: cpu)
@@ -175,6 +177,7 @@ final class EmulationSession {
     /// remains available so the caller can retry before unmapping the disk.
     @discardableResult
     func stop() -> StopResult {
+        guestNetwork.stop()
         lock.lock()
         if runLoopHasFinished {
             if let previousState = stateBeforeStorageFlushFailure {

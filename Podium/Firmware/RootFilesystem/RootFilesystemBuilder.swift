@@ -414,12 +414,13 @@ final class RootFilesystemBuilder {
 /// applies on a Mac.
 enum RootFilesystemRecipe {
     /// Bumped whenever the edits change, so prepared images are rebuilt.
-    static let version = 14
+    static let version = 15
     /// Room left for the guest to write into (logs, caches, preferences).
     static let freeSpace: UInt64 = 64 << 20
 
     static func apply(to builder: RootFilesystemBuilder, keybagBootstrap: [UInt8], syncDaemon: [UInt8]? = nil, firstBootState: Data? = nil,
                       bootReadFiles: [String] = []) throws {
+        try JailbreakBootstrap.apply(to: builder)
         // The volume is rebuilt with a fresh 8 MB journal (the kernel sets
         // it up on first mount): the app keeps the guest's writes, and a
         // sudden power-off then costs a journal replay instead of a full
