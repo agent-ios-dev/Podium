@@ -53,10 +53,15 @@ static struct sockaddr_in address(const char *ip) {
 }
 static void install_cydia(void) {
     if (access("/Applications/Cydia.app/Cydia", F_OK) || !access("/private/var/lib/podium-cydia-ready", F_OK)) return;
+    pid_t setup=fork();
+    if(!setup) { execl("/bin/bash","bash","/usr/libexec/cydia/startup",(char *)0); _exit(1); }
+    int configured=1; if(setup>0) waitpid(setup,&configured,0);
+    if(configured!=0) { logline("Cydia startup failed"); return; }
     pid_t child=fork();
     if (!child) { setgid(501); setuid(501); execl("/usr/bin/uicache", "uicache", (char *)0); _exit(1); }
     int status=1; if(child>0) waitpid(child,&status,0);
     if(status==0) { FILE *f=fopen("/private/var/lib/podium-cydia-ready","w"); if(f) fclose(f); logline("Cydia uicache completed"); }
+    else logline("Cydia uicache failed");
 }
 static void publish(const char *key, const char *xml) {
     void *cf=dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",RTLD_LAZY);

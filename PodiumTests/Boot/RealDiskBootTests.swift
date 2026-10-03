@@ -23,6 +23,10 @@ final class RealDiskBootTests: XCTestCase {
             syncDaemon: [UInt8](sync), firstBootState: state, bootReadFiles: RootFilesystemRecipe.fileList(readFiles))
         let header = try RootFilesystemPreparer.readHFSPlusVolumeHeader(at: image)
         XCTAssertEqual(UInt64(header.totalBlocks) * UInt64(header.blockSize), FileBackedStorage.capacity)
+        let installed=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
+        for path in ["/Applications/Cydia.app/Cydia", "/usr/libexec/cydia/cydo", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/libexec/podium_netd"] {
+            XCTAssertTrue(installed.contains(path),"New guest must contain \(path)")
+        }
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
         if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {
@@ -49,12 +53,14 @@ final class RealDiskBootTests: XCTestCase {
             if EmulatorCore.lockScreenIsUp(session.display) {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
-                if session.guestNetwork.messages.contains("HTTP test received a real internet response") { break }
+                let events=session.guestNetwork.messages
+                if events.contains("HTTP test received a real internet response") && events.contains("Cydia uicache completed") { break }
             }
         }
         XCTAssertTrue(messages.contains("BSD root") || messages.contains("hfs:"), "The guest must reach its real disk driver: \(messages)")
         XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
         XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")
         XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
     }
 }
