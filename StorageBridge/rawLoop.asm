@@ -17,7 +17,7 @@ eor r0,r0,#1
 str r0,[sp]
 movw r0,#4096
 bl 0x8001ccec
-mov r7,r0
+mov r10,r0
 cmp r0,#0
 beq no_memory
 again:
@@ -37,20 +37,20 @@ cmp r8,#0
 beq reading
 mov r0,r4
 bl 0x801e2ec8
-mov r10,r0
+str r0,[sp,#16]
 cmp r0,#0
 beq no_memory
-mov r0,r7
+mov r0,r10
 movs r1,#0
 mov r2,r5
-mov r3,r10
+ldr r3,[sp,#16]
 bl 0x801e25d4
 mov r11,r0
-mov r0,r10
+ldr r0,[sp,#16]
 bl 0x801e2c18
 cmp r11,#0
 bne return_saved_error
-mov r0,r7
+mov r0,r10
 mov r1,r5
 ldr r2,[sp,#8]
 ldr r3,[sp,#12]
@@ -64,7 +64,7 @@ cmp r11,#0
 bne return_saved_error
 b again
 reading:
-mov r0,r7
+mov r0,r10
 mov r1,r5
 ldr r2,[sp,#8]
 ldr r3,[sp,#12]
@@ -74,7 +74,7 @@ bne finish
 cmp r1,#0
 beq success
 mov r2,r1
-mov r0,r7
+mov r0,r10
 movs r1,#0
 mov r3,r4
 bl 0x801e25d4
@@ -91,9 +91,9 @@ success:
 movs r0,#0
 finish:
 mov r11,r0
-cmp r7,#0
+cmp r10,#0
 beq no_free
-mov r0,r7
+mov r0,r10
 movw r1,#4096
 bl 0x8001ccfc
 no_free:
