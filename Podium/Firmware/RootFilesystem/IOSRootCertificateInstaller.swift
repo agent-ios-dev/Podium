@@ -107,7 +107,6 @@ enum IOSRootCertificateInstaller {
         let alreadyCurrent = exists && columnData(statement, 0) == digestData &&
             columnData(statement, 1) == trustSettings && columnData(statement, 2) == certificateDER
         sqlite3_finalize(statement)
-        statement = nil
         if alreadyCurrent { return false }
 
         let digest = digestData.hex
@@ -233,6 +232,6 @@ enum IOSRootCertificateInstaller {
     }
 }
 
-private extension Data {
+private extension Collection where Element == UInt8 {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }
