@@ -5,7 +5,9 @@ final class GuestNetworkBridge {
     private let lock = NSLock()
     private var packets: [Data] = []
     private var log: [String] = []
+    private var consumed = 0
     var messages: [String] { lock.lock(); defer { lock.unlock() }; return log }
+    func newMessages() -> [String] { lock.lock(); defer { lock.unlock() }; let result=Array(log.dropFirst(consumed)); consumed=log.count; return result }
     init() { network.onReceive = { [weak self] packet in
         guard let self else { return }; self.lock.lock(); defer { self.lock.unlock() }
         if self.packets.count<256 { self.packets.append(packet) }

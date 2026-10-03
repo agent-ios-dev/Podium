@@ -40,7 +40,6 @@ final class EmulatorCore {
     var hasStorageFlushFailure: Bool { session?.hasStorageFlushFailure ?? false }
 
     let audioOutput: AudioOutput
-    let networkInterface: NetworkInterface
     let inputController: InputController
     let persistentGuestStorage: PersistentGuestStorage
 
@@ -65,12 +64,10 @@ final class EmulatorCore {
 
     init(
         audioOutput: AudioOutput = NullAudioOutput(),
-        networkInterface: NetworkInterface = NullNetworkInterface(),
         inputController: InputController = PassthroughInputController(),
         persistentGuestStorage: PersistentGuestStorage? = nil
     ) {
         self.audioOutput = audioOutput
-        self.networkInterface = networkInterface
         self.inputController = inputController
         self.persistentGuestStorage = persistentGuestStorage ?? PersistentGuestStorage()
     }
@@ -206,6 +203,7 @@ final class EmulatorCore {
 
     private func poll() {
         guard let session else { return }
+        for message in session.guestNetwork.newMessages() { appendLog("Network/Cydia: \(message)") }
         let snapshot = session.snapshot()
         jitAvailable = snapshot.jitAvailable
         let now = Date()

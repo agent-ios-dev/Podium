@@ -20,6 +20,9 @@ final class PacketNetwork: NetworkInterface {
         var pending: [(UInt32, Data, Date)] = []
         var buffered = Data()
         var ended = false
+        var sentFIN = false
+        var reading = false
+        var lastActivity = Date()
         init(_ c: NWConnection, _ s: [UInt8], _ d: [UInt8], _ sp: UInt16, _ dp: UInt16, _ seq: UInt32) {
             connection=c; source=s; destination=d; sourcePort=sp; destinationPort=dp; expected=seq &+ 1
         }
@@ -59,6 +62,7 @@ final class PacketNetwork: NetworkInterface {
             c.start(queue:queue); return
         }
         guard let f=flows[key], f.ready else { return }
+        f.lastActivity=Date()
         if flags&0x10 != 0 {
             f.pending.removeAll { Int32(bitPattern:ack &- $0.0)>=0 }
             if !f.established && ack==f.next { f.established=true; receive(f) }
@@ -78,7 +82,10 @@ final class PacketNetwork: NetworkInterface {
         flush(f)
     }
     private func receive(_ f: Flow) {
+        guard !f.reading, !f.ended, f.buffered.count<65536 else { return }
+        f.reading=true
         f.connection.receive(minimumIncompleteLength:1,maximumLength:32768) { data,_,done,error in
+            f.reading=false
             if let data { f.buffered.append(data) }; f.ended=done || error != nil; self.flush(f)
             if !f.ended { self.receive(f) }
         }
@@ -89,13 +96,15 @@ final class PacketNetwork: NetworkInterface {
             let n=min(1200,f.buffered.count), part=Data(f.buffered.prefix(n)); f.buffered.removeFirst(n)
             tcp(f,flags:0x18,body:part)
         }
-        if f.ended && f.buffered.isEmpty && !f.pending.contains(where: { $0.1.count>33 && $0.1[33]&1 != 0 }) {
-            f.ended=false; tcp(f,flags:0x11)
+        if f.ended && f.buffered.isEmpty && !f.sentFIN {
+            f.sentFIN=true; tcp(f,flags:0x11)
         }
+        receive(f)
     }
     private func retransmit(_ f: Flow,key: String) {
         queue.asyncAfter(deadline:.now()+1) {
             guard self.flows[key] === f, !self.closed else { return }
+            if Date().timeIntervalSince(f.lastActivity)>120 { f.connection.cancel(); self.flows.removeValue(forKey:key); return }
             for (_,p,date) in f.pending where Date().timeIntervalSince(date)>=1 { self.onReceive?(p) }
             self.retransmit(f,key:key)
         }
