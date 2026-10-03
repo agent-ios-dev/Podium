@@ -4,9 +4,12 @@ struct EmulatorScreen: View {
     @Environment(FirmwareLibrary.self) private var firmwareLibrary
     @Environment(EmulatorCore.self) private var emulatorCore
     @State private var touchActive = false
+    @State private var isFullscreen = false
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
     @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
     @AppStorage(AppStorageKeys.experimentalDisplayResolution) private var displayResolutionDivisor = 1
+    @AppStorage(AppStorageKeys.customDisplayWidth) private var customDisplayWidth = 640
+    @AppStorage(AppStorageKeys.customDisplayHeight) private var customDisplayHeight = 960
 
     private var firmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
@@ -17,13 +20,24 @@ struct EmulatorScreen: View {
     @ViewBuilder
     private var screen: some View {
         if emulatorCore.bootStage == .running, let source = emulatorCore.framebufferSource {
-            GuestFramebufferView(source: source, resolutionDivisor: displayResolutionDivisor)
+            GuestFramebufferView(source: source, resolutionDivisor: displayResolutionDivisor,
+                                 customWidth: customDisplayWidth, customHeight: customDisplayHeight)
         } else {
             BootProgressView(stage: emulatorCore.bootStage, instructionsPerSecond: emulatorCore.instructionsPerSecond)
         }
     }
 
     var body: some View {
+        Group {
+            if isFullscreen { fullscreenContent } else { regularContent }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar(isFullscreen ? .hidden : .visible, for: .navigationBar)
+        .statusBarHidden(isFullscreen)
+    }
+
+    private var regularContent: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 Spacer(minLength: 12)
@@ -72,8 +86,6 @@ struct EmulatorScreen: View {
             .background(Color(.systemBackground))
             .ignoresSafeArea(edges: .bottom)
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 1) {
@@ -81,6 +93,13 @@ struct EmulatorScreen: View {
                     Text(emulatorCore.status.label)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isFullscreen = true
+                } label: {
+                    Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
                 }
             }
             if emulatorCore.isPoweredOn || emulatorCore.storageFlushFailure != nil {
@@ -93,6 +112,27 @@ struct EmulatorScreen: View {
                 }
             }
         }
+    }
+
+    private var fullscreenContent: some View {
+        GeometryReader { geometry in
+            screen
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .contentShape(Rectangle())
+                .gesture(touchGesture(in: geometry.size))
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 70)
+                        .onEnded { value in
+                            if value.startLocation.y < 100 && value.translation.height > 100 {
+                                isFullscreen = false
+                            }
+                        }
+                )
+                .background(Color.black)
+                .ignoresSafeArea()
+        }
+        .background(Color.black)
+        .ignoresSafeArea()
     }
 
     @ViewBuilder

@@ -22,6 +22,8 @@ struct SettingsScreen: View {
     @AppStorage(AppStorageKeys.experimentalAudio) private var experimentalAudio = false
     @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
     @AppStorage(AppStorageKeys.experimentalDisplayResolution) private var displayResolutionDivisor = 1
+    @AppStorage(AppStorageKeys.customDisplayWidth) private var customDisplayWidth = 640
+    @AppStorage(AppStorageKeys.customDisplayHeight) private var customDisplayHeight = 960
     @AppStorage(AppStorageKeys.confirmBeforeDeletingFirmware) private var confirmBeforeDeleting = true
     @AppStorage(AppStorageKeys.showDeveloperSettings) private var showDeveloperSettings = false
 
@@ -184,9 +186,20 @@ struct SettingsScreen: View {
                                 Text("640 × 960").tag(1)
                                 Text("320 × 480").tag(2)
                                 Text("160 × 240").tag(4)
+                                Text("Custom").tag(0)
                             }
-                            .pickerStyle(.segmented)
-                            Text("Changes rendered image detail. The emulated iPod hardware remains 640 × 960.")
+                            .pickerStyle(.menu)
+                            if displayResolutionDivisor == 0 {
+                                HStack {
+                                    TextField("Width", value: $customDisplayWidth, format: .number)
+                                        .keyboardType(.numberPad)
+                                    Text("×")
+                                    TextField("Height", value: $customDisplayHeight, format: .number)
+                                        .keyboardType(.numberPad)
+                                }
+                                .textFieldStyle(.roundedBorder)
+                            }
+                            Text("Changes rendered image detail only. Custom values are limited to 64–2048 wide and 96–3072 high; virtual hardware stays 640 × 960.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

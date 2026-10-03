@@ -13,14 +13,19 @@ import UIKit
 struct GuestFramebufferView: UIViewRepresentable {
     let source: FramebufferSource
     var resolutionDivisor = 1
+    var customWidth = 640
+    var customHeight = 960
 
     func makeUIView(context: Context) -> FramebufferMetalView {
-        FramebufferMetalView(source: source, resolutionDivisor: resolutionDivisor)
+        FramebufferMetalView(source: source, resolutionDivisor: resolutionDivisor,
+                             customWidth: customWidth, customHeight: customHeight)
     }
 
     func updateUIView(_ view: FramebufferMetalView, context: Context) {
         view.source = source
-        view.resolutionDivisor = max(1, resolutionDivisor)
+        view.resolutionDivisor = max(0, resolutionDivisor)
+        view.customWidth = min(max(customWidth, 64), 2048)
+        view.customHeight = min(max(customHeight, 96), 3072)
     }
 
     static func dismantleUIView(_ view: FramebufferMetalView, coordinator: ()) {
@@ -31,6 +36,8 @@ struct GuestFramebufferView: UIViewRepresentable {
 final class FramebufferMetalView: UIView {
     var source: FramebufferSource
     var resolutionDivisor: Int
+    var customWidth: Int
+    var customHeight: Int
 
     override class var layerClass: AnyClass { CAMetalLayer.self }
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
@@ -69,9 +76,11 @@ final class FramebufferMetalView: UIView {
     }
     """
 
-    init(source: FramebufferSource, resolutionDivisor: Int) {
+    init(source: FramebufferSource, resolutionDivisor: Int, customWidth: Int, customHeight: Int) {
         self.source = source
-        self.resolutionDivisor = max(1, resolutionDivisor)
+        self.resolutionDivisor = max(0, resolutionDivisor)
+        self.customWidth = min(max(customWidth, 64), 2048)
+        self.customHeight = min(max(customHeight, 96), 3072)
         let device = MTLCreateSystemDefaultDevice()
         self.device = device
         queue = device?.makeCommandQueue()
@@ -167,8 +176,13 @@ final class FramebufferMetalView: UIView {
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentTexture(frame.texture, index: 0)
             encoder.setFragmentSamplerState(sampler, index: 0)
-            var outputSize = SIMD2<Float>(Float(max(1, frame.texture.width / max(1, resolutionDivisor))),
-                                          Float(max(1, frame.texture.height / max(1, resolutionDivisor))))
+            var outputSize: SIMD2<Float>
+            if resolutionDivisor == 0 {
+                outputSize = SIMD2<Float>(Float(customWidth), Float(customHeight))
+            } else {
+                outputSize = SIMD2<Float>(Float(max(1, frame.texture.width / resolutionDivisor)),
+                                          Float(max(1, frame.texture.height / resolutionDivisor)))
+            }
             encoder.setFragmentBytes(&outputSize, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
