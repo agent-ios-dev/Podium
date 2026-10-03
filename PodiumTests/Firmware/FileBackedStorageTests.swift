@@ -45,6 +45,7 @@ final class FileBackedStorageTests: XCTestCase {
             // ABI table, a stack and an intentionally unaligned I/O buffer.
             let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
             let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.linearMap = (0x8000_0000, 0x8000_0000, 4 << 20)
             cpu.registers.sp = 0x8000_1000
             try cpu.writeData(512, GuestDiskBridge.md0 + 16, width: 4)
             try cpu.writeData(0, cpu.registers.sp + 4, width: 4)
@@ -82,6 +83,7 @@ final class FileBackedStorageTests: XCTestCase {
         try withDisk { _, disk in
             let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
             let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.linearMap = (0x8000_0000, 0x8000_0000, 4 << 20)
             let table: UInt32 = 0x8000_4000
             for section in 0..<4 {
                 let base = UInt32(0x8000_0000) + UInt32(section << 20)
@@ -117,6 +119,7 @@ final class FileBackedStorageTests: XCTestCase {
         try withDisk { _, disk in
             let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
             let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.linearMap = (0x8000_0000, 0x8000_0000, 4 << 20)
             try cpu.writeData(512, GuestDiskBridge.md0 + 16, width: 4)
             GuestDiskBridge.install(on: cpu, disk: disk)
             let ioctl = try XCTUnwrap(cpu.nativeFunctions[GuestDiskBridge.ioctlAddress])

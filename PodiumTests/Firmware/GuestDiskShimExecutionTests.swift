@@ -28,6 +28,7 @@ final class GuestDiskShimExecutionTests: XCTestCase {
         try disk.write(payload, at: offset)
         let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
         let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.linearMap = (0x8000_0000, 0x8000_0000, 4 << 20)
         try ram.writeBytes(Data(hex: GuestDiskBridge.strategyCode), at: GuestDiskBridge.strategyAddress)
         try cpu.writeData(512, GuestDiskBridge.md0 + 16, width: 4)
         GuestDiskBridge.install(on: cpu, disk: disk)
