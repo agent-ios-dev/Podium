@@ -6,6 +6,14 @@ import Darwin
 /// Mock only XNU buffer accessors; the host disk handler is real.
 final class GuestDiskShimExecutionTests: XCTestCase {
     func testStrategyReadsHighOffsetsAndPreservesXNUCallingConvention() throws {
+        try runStrategy(translated: false)
+    }
+
+    func testTranslatedStrategyPreservesXNUCallingConvention() throws {
+        try runStrategy(translated: true)
+    }
+
+    private func runStrategy(translated: Bool) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -60,6 +68,19 @@ final class GuestDiskShimExecutionTests: XCTestCase {
         cpu.registers.pc = GuestDiskBridge.strategyAddress
         cpu.cpsr.thumbState = true
         cpu.breakpoints = [0x8000_5000]
+        if translated {
+            let table: UInt32 = 0x8002_0000
+            for section in 0..<4 {
+                let base = UInt32(0x8000_0000) + UInt32(section << 20)
+                try ram.writeWord32(base | 0xC02, at: table + ((base >> 20) * 4))
+            }
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 2, crm: 0, opc2: 0, value: table)
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 3, crm: 0, opc2: 0, value: 1)
+            cpu.cp15.write(coprocessor: 15, opc1: 0, crn: 1, crm: 0, opc2: 0, value: 1)
+            cpu.linearMap = (0x8000_0000, 0x8000_0000, 4 << 20)
+            guard let dbt = DBTEngine(cpu: cpu) else { throw XCTSkip("JIT unavailable") }
+            cpu.dbt = dbt
+        }
         cpu.run(maxUnits: 1000)
         XCTAssertNil(cpu.lastError)
         XCTAssertEqual(cpu.hitBreakpoint, 0x8000_5000)
