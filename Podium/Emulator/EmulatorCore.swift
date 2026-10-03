@@ -253,6 +253,8 @@ final class EmulatorCore {
         if case .running = bootStage { hadFinishedBoot = true } else { hadFinishedBoot = false }
         pollTask?.cancel()
         pollTask = nil
+        let finalMessages = finishedSession.newKernelMessages()
+        if !finalMessages.isEmpty { appendLog(finalMessages) }
         bootStage = nil
         if finishedSession.hasStorageFlushFailure {
             status = .error("Guest stopped, but persistent storage couldn't be flushed. Retry Power Off before leaving.")
