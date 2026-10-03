@@ -33,7 +33,7 @@ final class RealDiskBootTests: XCTestCase {
         }
     }
 
-    func testReferenceFirmwareTrustStoreInstallation() throws {
+    func testReferenceFirmwareTrustStoreAndRussianLocale() throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let ipsw = repo.appendingPathComponent(".reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw")
@@ -48,6 +48,12 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(try IOSRootCertificateInstaller.apply(to: builder), "Podium must seed the missing iOS 6 TrustStore in a clean restore image")
         XCTAssertTrue(builder.contains(IOSRootCertificateInstaller.trustStorePath))
         XCTAssertFalse(try IOSRootCertificateInstaller.apply(to: builder), "Applying the installer a second time must leave the TrustStore unchanged")
+
+        try IOSLanguageInstaller.apply(to: builder)
+        let preferencesData = Data(try builder.contents(of: IOSLanguageInstaller.globalPreferencesPath))
+        let preferences = try XCTUnwrap(PropertyListSerialization.propertyList(from: preferencesData, format: nil) as? [String: Any])
+        XCTAssertEqual(preferences["AppleLanguages"] as? [String], ["ru", "en"])
+        XCTAssertEqual(preferences["AppleLocale"] as? String, "ru_RU")
     }
 
     func testReferenceFirmwareBootWithFileBackedDisk() throws {

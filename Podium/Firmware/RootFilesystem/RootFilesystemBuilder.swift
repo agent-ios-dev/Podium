@@ -414,7 +414,7 @@ final class RootFilesystemBuilder {
 /// applies on a Mac.
 enum RootFilesystemRecipe {
     /// Bumped whenever the edits change, so prepared images are rebuilt.
-    static let version = 18
+    static let version = 19
     /// Room left for the guest to write into (logs, caches, preferences).
     static let freeSpace: UInt64 = 64 << 20
 
@@ -511,6 +511,9 @@ enum RootFilesystemRecipe {
         try applyHactivation(to: builder)
 
         if let firstBootState { try applyFirstBootState(firstBootState, to: builder) }
+        // Apply after captured first-boot files, which may include global
+        // preferences, so the first guest session starts in Russian.
+        try IOSLanguageInstaller.apply(to: builder)
 
         // Grouped table views — Settings and most other lists — fill their
         // background with UITableViewTexture.png, 16 by 2 pixels. With no

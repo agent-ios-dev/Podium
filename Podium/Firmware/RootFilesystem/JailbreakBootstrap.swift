@@ -12,8 +12,8 @@ enum JailbreakBootstrap {
               let certificate=Bundle.main.url(forResource:"ISRGRootX1",withExtension:"cer"),
               let certificateData=try? Data(contentsOf:certificate) else { return nil }
         data.append(certificateData)
-        data.append(Data("ios6-truststore-seed-v1".utf8))
-        return "3:"+SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+        data.append(Data("ios6-truststore-seed-v1;ios6-russian-locale-v1".utf8))
+        return "4:"+SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
     }
     static func apply(to builder: RootFilesystemBuilder) throws {
         try IOSRootCertificateInstaller.apply(to: builder)

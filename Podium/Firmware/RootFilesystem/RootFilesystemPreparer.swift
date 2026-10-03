@@ -119,6 +119,7 @@ enum RootFilesystemPreparer {
         if builder.contains(JailbreakBootstrap.markerPath),
            String(decoding:try builder.contents(of:JailbreakBootstrap.markerPath),as:UTF8.self)==signature { return }
         try JailbreakBootstrap.apply(to:builder)
+        try IOSLanguageInstaller.apply(to:builder)
         let size=(try FileManager.default.attributesOfItem(atPath:image.path)[.size] as! NSNumber).uint64Value
         let temporary=image.appendingPathExtension("updating")
         let version=try? String(contentsOf:markerURL(for:image),encoding:.utf8)
