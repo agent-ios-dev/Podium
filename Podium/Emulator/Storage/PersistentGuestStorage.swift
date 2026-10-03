@@ -77,6 +77,7 @@ final class PersistentGuestStorage {
         guard imageHeader.signature == HFSPlusVolumeHeader.signatureHFSPlus || imageHeader.signature == HFSPlusVolumeHeader.signatureHFSX else {
             throw StorageError.notAnHFSVolume
         }
+        try RootFilesystemPreparer.installGuestAddonsIfNeeded(to:prepared.url)
         return prepared
     }
 

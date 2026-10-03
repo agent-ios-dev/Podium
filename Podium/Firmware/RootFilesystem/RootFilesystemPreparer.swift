@@ -108,6 +108,24 @@ enum RootFilesystemPreparer {
         let size: UInt64
     }
 
+    /// Upgrade addons transactionally without erasing the existing guest.
+    static func installGuestAddonsIfNeeded(to image: URL) throws {
+        guard let signature=JailbreakBootstrap.signature else { return }
+        let builder=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
+        guard builder.contains("/Applications/MobileSafari.app/MobileSafari") else { return }
+        if builder.contains(JailbreakBootstrap.markerPath),
+           String(decoding:try builder.contents(of:JailbreakBootstrap.markerPath),as:UTF8.self)==signature { return }
+        try JailbreakBootstrap.apply(to:builder)
+        let size=(try FileManager.default.attributesOfItem(atPath:image.path)[.size] as! NSNumber).uint64Value
+        let temporary=image.appendingPathExtension("updating")
+        let version=try? String(contentsOf:markerURL(for:image),encoding:.utf8)
+        defer { try? FileManager.default.removeItem(at:temporary); try? FileManager.default.removeItem(at:markerURL(for:temporary)) }
+        try builder.write(to:temporary,freeSpace:8<<20,maximumVolumeBytes:size)
+        let header=try readHFSPlusVolumeHeader(at:temporary)
+        guard UInt64(header.freeBlocks)*UInt64(header.blockSize)>=8<<20 else { throw PreparationError.invalidHFSImage("Cydia needs additional guest free space") }
+        try safelyPromote(temporary,to:image,markerVersion:version,fileManager:.default)
+    }
+
     /// Rebuilds the user volume with staged host files in the guest-visible
     /// `/private/var/mobile/Media/Podium` directory.
     static func addGuestFiles(_ files: [GuestFile], to image: URL, keepingFreeSpace freeSpace: UInt64) throws {

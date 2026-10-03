@@ -24,8 +24,18 @@ final class RealDiskBootTests: XCTestCase {
         let header = try RootFilesystemPreparer.readHFSPlusVolumeHeader(at: image)
         XCTAssertEqual(UInt64(header.totalBlocks) * UInt64(header.blockSize), FileBackedStorage.capacity)
         let installed=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
+        let sentinel="/private/var/mobile/Media/podium-upgrade-check.txt"
+        try installed.addFile(sentinel,contents:Array("preserve guest data".utf8),template:"/private/etc/fstab")
+        try installed.remove(JailbreakBootstrap.markerPath)
+        try installed.write(to:image.appendingPathExtension("upgrade-test"),freeSpace:8<<20,maximumVolumeBytes:FileBackedStorage.capacity)
+        try FileManager.default.removeItem(at:image)
+        try FileManager.default.moveItem(at:image.appendingPathExtension("upgrade-test"),to:image)
+        try RootFilesystemPreparer.installGuestAddonsIfNeeded(to:image)
+        let upgraded=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
+        XCTAssertEqual(String(decoding:try upgraded.contents(of:sentinel),as:UTF8.self),"preserve guest data")
+        XCTAssertEqual(String(decoding:try upgraded.contents(of:JailbreakBootstrap.markerPath),as:UTF8.self),JailbreakBootstrap.signature)
         for path in ["/Applications/Cydia.app/Cydia", "/usr/libexec/cydia/cydo", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/libexec/podium_netd"] {
-            XCTAssertTrue(installed.contains(path),"New guest must contain \(path)")
+            XCTAssertTrue(upgraded.contains(path),"New guest must contain \(path)")
         }
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)

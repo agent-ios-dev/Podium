@@ -5,6 +5,12 @@ import CryptoKit
 /// Real-device exploits/untether daemons are deliberately unnecessary:
 /// the guest kernel already boots with signing enforcement disabled.
 enum JailbreakBootstrap {
+    static let markerPath="/private/var/lib/podium-addons"
+    static var signature: String? {
+        guard let tool=Bundle.main.url(forResource:"podium_netd",withExtension:"bin"),
+              let data=try? Data(contentsOf:tool) else { return nil }
+        return "1:"+SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+    }
     static func apply(to builder: RootFilesystemBuilder) throws {
         guard builder.contains("/Applications/MobileSafari.app/MobileSafari"),
               let url=Bundle.main.url(forResource:"cydia-bootstrap",withExtension:"zip") else { return }
@@ -22,6 +28,20 @@ enum JailbreakBootstrap {
             let resolved=try builder.resolvedPath(path,resolvingFinalComponent:false)
             try directory((resolved as NSString).deletingLastPathComponent)
             let mode=UInt16(item["mode"] as! Int), uid=UInt32(item["uid"] as! Int), gid=UInt32(item["gid"] as! Int)
+            if builder.contains(resolved), item["type"] as! String != "directory" {
+                if resolved=="/private/var/lib/dpkg/status", let entry=archive.entry(named:String(path.dropFirst())) {
+                    let existing=String(decoding:try builder.contents(of:resolved),as:UTF8.self)
+                    let incoming=String(decoding:try archive.data(for:entry),as:UTF8.self)
+                    let records=existing.components(separatedBy:"\n\n")
+                    let names=Set(records.compactMap { $0.components(separatedBy:"\n").first(where:{ $0.hasPrefix("Package: ") }) })
+                    let additional=incoming.components(separatedBy:"\n\n").filter { record in
+                        guard let name=record.components(separatedBy:"\n").first(where:{ $0.hasPrefix("Package: ") }) else { return false }
+                        return !names.contains(name)
+                    }
+                    try builder.replaceContents(of:resolved,with:[UInt8]((existing+"\n\n"+additional.joined(separator:"\n\n")+"\n").utf8))
+                }
+                continue // Keep existing applications, configuration and dependencies.
+            }
             switch item["type"] as! String {
             case "directory": if !builder.contains(resolved) { try builder.addFolder(resolved,owner:uid,group:gid,mode:mode) }
             case "symlink":
@@ -39,5 +59,6 @@ enum JailbreakBootstrap {
             let data=try PropertyListSerialization.data(fromPropertyList:daemon,format:.binary,options:0)
             try builder.addFile("/System/Library/LaunchDaemons/com.podium.netd.plist",contents:[UInt8](data),template:"/System/Library/LaunchDaemons/com.apple.mobile.keybagd.plist")
         }
+        if let signature { try builder.addFile(markerPath,contents:[UInt8](signature.utf8),template:"/private/etc/fstab") }
     }
 }
