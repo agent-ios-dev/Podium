@@ -33,7 +33,8 @@ final class RealDiskBootTests: XCTestCase {
         session.start()
         defer { session.stop() }
         var messages = ""
-        for second in 0..<90 {
+        var lockScreenAppeared = false
+        for second in 0..<180 {
             Thread.sleep(forTimeInterval: 1)
             let text = session.newKernelMessages()
             messages += text
@@ -44,7 +45,13 @@ final class RealDiskBootTests: XCTestCase {
                 XCTFail("Guest stopped during reference boot: \(snapshot.state); kernel log: \(messages)")
                 return
             }
+            if EmulatorCore.lockScreenIsUp(session.display) {
+                lockScreenAppeared = true
+                print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
+                break
+            }
         }
         XCTAssertTrue(messages.contains("BSD root") || messages.contains("hfs:"), "The guest must reach its real disk driver: \(messages)")
+        XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
     }
 }

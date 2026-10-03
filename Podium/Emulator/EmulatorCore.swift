@@ -232,7 +232,7 @@ final class EmulatorCore {
     /// The boot screens (Apple logo, SpringBoard's logo flare) are almost
     /// all black or a dark glow; the lock screen is a bright, full-screen
     /// wallpaper.
-    static func lockScreenIsUp(_ display: DisplayScanout) -> Bool {
+    nonisolated static func lockScreenIsUp(_ display: DisplayScanout) -> Bool {
         guard !display.activeLayers.isEmpty else { return false }
         let width = display.pixelWidth, height = display.pixelHeight
         var pixels = [UInt32](repeating: 0, count: width * height)
