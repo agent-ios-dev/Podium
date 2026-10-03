@@ -3,6 +3,25 @@ import SQLite3
 @testable import Podium
 
 final class IOSRootCertificateInstallerTests: XCTestCase {
+    func testAddsCertificateToFreshIOS6TrustStoreSchema() throws {
+        let certificateURL = try XCTUnwrap(Bundle(for: TestBundleToken.self).url(forResource: "ISRGRootX1", withExtension: "cer"))
+        let certificate = try Data(contentsOf: certificateURL)
+        let database = FileManager.default.temporaryDirectory.appendingPathComponent("PodiumFreshTrustStore-\(UUID().uuidString).sqlite3")
+        defer { try? FileManager.default.removeItem(at: database) }
+
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(database.path, &connection), SQLITE_OK)
+        let db = try XCTUnwrap(connection)
+        let schema = "CREATE TABLE tsettings(sha1 BLOB NOT NULL DEFAULT '', subj BLOB NOT NULL DEFAULT '', tset BLOB, data BLOB, PRIMARY KEY(sha1));"
+        XCTAssertEqual(sqlite3_exec(db, schema, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(db), SQLITE_OK)
+
+        XCTAssertTrue(try IOSRootCertificateInstaller.install(certificateDER: certificate, databaseAt: database))
+        XCTAssertFalse(try IOSRootCertificateInstaller.install(certificateDER: certificate, databaseAt: database))
+        XCTAssertEqual(try integer("SELECT COUNT(*) FROM tsettings", in: database), 1)
+        XCTAssertEqual(try integer("SELECT COUNT(*) FROM tsettings WHERE data=X'\(certificate.map { String(format: "%02x", $0) }.joined())'", in: database), 1)
+    }
+
     func testAddsISRGRootX1ToBothSupportedTrustStoreSchemasAndPreservesExistingEntries() throws {
         let certificateURL = try XCTUnwrap(Bundle(for: TestBundleToken.self).url(forResource: "ISRGRootX1", withExtension: "cer"))
         let certificate = try Data(contentsOf: certificateURL)

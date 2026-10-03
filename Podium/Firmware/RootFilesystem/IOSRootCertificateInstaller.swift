@@ -8,8 +8,7 @@ import SQLite3
 /// certificate subject is inserted or updated.
 enum IOSRootCertificateInstaller {
     static let trustStorePath = "/private/var/Keychains/TrustStore.sqlite3"
-    static let systemTrustStorePath = "/System/Library/Frameworks/Security.framework/TrustStore.sqlite3"
-    static let supportedTrustStorePaths = [trustStorePath, systemTrustStorePath]
+    static let supportedTrustStorePaths = [trustStorePath]
     static let certificateResource = "ISRGRootX1.cer"
     private static let expectedSHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
     private static let trustSettings = Data("""
@@ -55,13 +54,14 @@ enum IOSRootCertificateInstaller {
         guard SHA256.hash(data: certificate).map({ String(format: "%02x", $0) }).joined() == expectedSHA256 else {
             throw InstallError.wrongCertificate
         }
-        // iOS 6 restore images contain the built-in Security.framework store,
-        // but the per-user store under /private/var/Keychains is created only
-        // after first boot/profile installation. Use the user store when it
-        // exists; otherwise seed the system store so fresh guest images boot.
-        guard let path = supportedTrustStorePaths.first(where: builder.contains) else {
-            throw InstallError.invalidTrustStore("neither the user nor system TrustStore.sqlite3 exists in the guest image")
+        // A clean iOS 6.1.6 restore image has /private/var/Keychains but no
+        // TrustStore.sqlite3 yet. Seed the documented iOS 5–6 user store with
+        // the schema used by the historical CA importer rather than changing
+        // the built-in system roots.
+        guard builder.isFolder(at: "/private/var/Keychains") else {
+            throw InstallError.invalidTrustStore("/private/var/Keychains is missing from the guest image")
         }
+        let storeExists = builder.contains(trustStorePath)
 
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("podium-truststore-\(UUID().uuidString).sqlite3")
@@ -70,11 +70,37 @@ enum IOSRootCertificateInstaller {
                 try? FileManager.default.removeItem(atPath: temporary.path + suffix)
             }
         }
-        try Data(try builder.contents(of: path)).write(to: temporary)
+        if storeExists {
+            try Data(try builder.contents(of: trustStorePath)).write(to: temporary)
+        } else {
+            try createEmptyIOS6TrustStore(at: temporary)
+        }
         let changed = try install(certificateDER: certificate, databaseAt: temporary)
-        guard changed else { return false }
-        try builder.replaceContents(of: path, with: [UInt8](try Data(contentsOf: temporary)))
+        guard changed || !storeExists else { return false }
+        let contents = [UInt8](try Data(contentsOf: temporary))
+        if storeExists {
+            try builder.replaceContents(of: trustStorePath, with: contents)
+        } else {
+            // trustd runs as a system service and reads this file at boot.
+            try builder.addFile(trustStorePath, contents: contents, owner: 0, group: 0,
+                                mode: 0o644, template: "/private/etc/fstab")
+        }
         return true
+    }
+
+    private static func createEmptyIOS6TrustStore(at url: URL) throws {
+        var db: OpaquePointer?
+        let openResult = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        guard openResult == SQLITE_OK, let db else {
+            let detail = db.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite3_open_v2 returned \(openResult)"
+            if let db { sqlite3_close(db) }
+            throw InstallError.sqlite(detail)
+        }
+        defer { sqlite3_close(db) }
+        let schema = "CREATE TABLE tsettings(sha1 BLOB NOT NULL DEFAULT '', subj BLOB NOT NULL DEFAULT '', tset BLOB, data BLOB, PRIMARY KEY(sha1));"
+        guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else {
+            throw InstallError.sqlite(String(cString: sqlite3_errmsg(db)))
+        }
     }
 
     /// Testable database operation. Returns false when this exact CA entry

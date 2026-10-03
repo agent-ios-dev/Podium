@@ -414,7 +414,7 @@ final class RootFilesystemBuilder {
 /// applies on a Mac.
 enum RootFilesystemRecipe {
     /// Bumped whenever the edits change, so prepared images are rebuilt.
-    static let version = 17
+    static let version = 18
     /// Room left for the guest to write into (logs, caches, preferences).
     static let freeSpace: UInt64 = 64 << 20
 
