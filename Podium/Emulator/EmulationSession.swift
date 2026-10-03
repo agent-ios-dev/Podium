@@ -65,6 +65,7 @@ final class EmulationSession {
     private let ram: FlatPhysicalMemory
     /// The persistent user volume, if this run shares it with the host file.
     private let persistentRootFilesystem: Bool
+    private var fileDisk: FileBackedStorage?
     /// Where the RAM disk sits in guest RAM (offsets from its base).
     private var ramDiskRange: Range<Int> = 0..<0
     private var messageBufferOffset: Int?
@@ -118,9 +119,20 @@ final class EmulationSession {
             pixelHeight: GuestMemoryLayout.framebufferHeight
         ))
 
-        let size = try FileManager.default.attributesOfItem(atPath: rootFilesystem.path)[.size] as? Int ?? 0
-        let prepared = try KernelBootstrap.prepare(kernel: kernel, deviceTree: deviceTree, on: bus, ramDiskSize: size)
-        if let address = prepared.ramDiskAddress {
+        let diskAttributes = try FileManager.default.attributesOfItem(atPath: rootFilesystem.path)
+        let size = (diskAttributes[.size] as? NSNumber)?.intValue ?? 0
+        // Existing small disks keep their original RAM-disk boot path. New
+        // eight-GiB volumes use md0 backed by host block I/O. A single page
+        // in the device tree registers md0 without reserving the disk in RAM.
+        let blockBacked = size >= GuestMemoryLayout.ramSize
+        let bootKernel = try (blockBacked ? GuestDiskBridge.patch(kernel) : kernel)
+        let prepared = try KernelBootstrap.prepare(kernel: bootKernel, deviceTree: deviceTree, on: bus,
+                                                   ramDiskSize: blockBacked ? 4096 : size)
+        if blockBacked {
+            let disk = try FileBackedStorage(url: rootFilesystem, persistent: persistent)
+            fileDisk = disk
+            GuestDiskBridge.install(on: cpu, disk: disk)
+        } else if let address = prepared.ramDiskAddress {
             _ = try ram.mapFile(rootFilesystem, at: address, shared: persistent)
             let start = Int(address - GuestMemoryLayout.ramPhysicalBase)
             ramDiskRange = start..<start + size
@@ -137,6 +149,11 @@ final class EmulationSession {
         // watchdog, and spins until it lands) ends the run too; the run
         // loop sees it at the end of the chunk.
         platform.watchdog.onReset = { [unowned self] in guestReset = true }
+    }
+
+    private func flushStorage() throws {
+        if let fileDisk { try fileDisk.synchronize() }
+        try ram.flushSharedFileMappings()
     }
 
     func start() {
@@ -162,7 +179,7 @@ final class EmulationSession {
         if runLoopHasFinished {
             if let previousState = stateBeforeStorageFlushFailure {
                 do {
-                    try ram.flushSharedFileMappings()
+                    try flushStorage()
                     storageFlushError = nil
                     stateBeforeStorageFlushFailure = nil
                     state = previousState
@@ -193,7 +210,7 @@ final class EmulationSession {
             var finalState = State.stopped
             if persistentRootFilesystem {
                 do {
-                    try ram.flushSharedFileMappings()
+                    try flushStorage()
                 } catch {
                     finalState = .halted("couldn't flush persistent guest storage: \(error)")
                 }
@@ -415,7 +432,7 @@ final class EmulationSession {
         virtualTime = cpu.virtualTime
         if persistentRootFilesystem {
             do {
-                try ram.flushSharedFileMappings()
+                try flushStorage()
             } catch {
                 finalState = .halted("couldn't flush persistent guest storage: \(error)")
                 lock.lock()

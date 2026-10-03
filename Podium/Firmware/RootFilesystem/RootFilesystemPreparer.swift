@@ -8,7 +8,7 @@ import Darwin
 ///    entry), decrypting it (`encrcdsa`, the published key for this one
 ///    reference firmware) into a temporary file;
 /// 2. read its HFSX partition, apply `RootFilesystemRecipe`, and write a
-///    new, packed volume sized to fit in guest RAM as a RAM disk.
+///    new sparse 8 GiB volume served through the file-backed md0 bridge.
 ///
 /// The prepared system image stays next to the IPSW with a version marker;
 /// the persistent user image is owned by the app's support store.
@@ -234,10 +234,7 @@ enum RootFilesystemPreparer {
     /// a byte-for-byte copy.
     private static func copyHFSImage(from source: URL, to destination: URL, fileManager: FileManager) throws {
         _ = try readHFSPlusVolumeHeader(at: source)
-        if clonefile(source.path, destination.path, 0) != 0 {
-            try? fileManager.removeItem(at: destination)
-            try fileManager.copyItem(at: source, to: destination)
-        }
+        try FileBackedStorage.sparseCopy(from: source, to: destination)
         _ = try readHFSPlusVolumeHeader(at: destination)
     }
 
@@ -455,7 +452,7 @@ enum RootFilesystemPreparer {
         let builder = try RootFilesystemBuilder(volume: volume)
         try RootFilesystemRecipe.apply(to: builder, keybagBootstrap: keybagBootstrap, syncDaemon: syncDaemon, firstBootState: firstBootState,
                                        bootReadFiles: bootReadFiles)
-        try builder.write(to: partial, freeSpace: RootFilesystemRecipe.freeSpace) { written in
+        try builder.write(to: partial, freeSpace: RootFilesystemRecipe.freeSpace, maximumVolumeBytes: FileBackedStorage.capacity) { written in
             progress(Progress(phase: .building, fraction: Double(written.bytesWritten) / Double(max(written.totalBytes, 1))))
         }
 

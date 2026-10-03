@@ -1,0 +1,99 @@
+import XCTest
+import Darwin
+@testable import Podium
+
+final class FileBackedStorageTests: XCTestCase {
+    private func withDisk(_ body: (URL, FileBackedStorage) throws -> Void) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("disk.hfs")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: FileBackedStorage.capacity)
+        try handle.close()
+        try body(url, FileBackedStorage(url: url, persistent: true))
+    }
+
+    func testHighOffsetsPersistenceBoundsAndPrivateBoot() throws {
+        try withDisk { url, disk in
+            let last = disk.blockCount - 1
+            let high = Int((UInt64(5) << 30) / 512)
+            let payload = Data(repeating: 0xA7, count: 512)
+            try disk.writeBlocks(payload, at: high)
+            try disk.writeBlocks(Data(repeating: 0xCC, count: 512), at: last)
+            try disk.synchronize()
+            let reopened = try FileBackedStorage(url: url, persistent: true)
+            XCTAssertEqual(try reopened.readBlocks(at: high, count: 1), payload)
+            XCTAssertEqual(try reopened.readBlocks(at: last, count: 1), Data(repeating: 0xCC, count: 512))
+            XCTAssertEqual(try disk.readBlocks(at: 0, count: 1), Data(repeating: 0, count: 512))
+            XCTAssertThrowsError(try disk.readBlocks(at: last, count: 2))
+            XCTAssertThrowsError(try disk.writeBlocks(payload, at: disk.blockCount))
+            XCTAssertThrowsError(try disk.writeBlocks(Data([1]), at: 0))
+            let privateDisk = try FileBackedStorage(url: url, persistent: false)
+            try privateDisk.writeBlocks(Data(repeating: 0x55, count: 512), at: high)
+            XCTAssertEqual(try disk.readBlocks(at: high, count: 1), payload)
+            var info = stat()
+            XCTAssertEqual(stat(url.path, &info), 0)
+            XCTAssertLessThan(UInt64(info.st_blocks) * 512, 16 << 20, "Empty capacity must remain sparse")
+        }
+    }
+
+    func testGuestBridgeCrossesPagesAboveFourGiBAndReportsEOF() throws {
+        try withDisk { _, disk in
+            // MMU off: an artificial contiguous physical range covers md0's
+            // ABI table, a stack and an intentionally unaligned I/O buffer.
+            let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
+            let cpu = ARMv7CPU(memory: ram, jit: nil)
+            cpu.registers.sp = 0x8000_1000
+            try cpu.writeData(512, GuestDiskBridge.md0 + 16, width: 4)
+            try cpu.writeData(0, cpu.registers.sp + 4, width: 4)
+            let buffer: UInt32 = 0x8000_3F80
+            let payload = Data(repeating: 0x7B, count: 1024)
+            try ram.writeBytes(payload, at: buffer)
+            func transfer(block: UInt64, read: Bool, count: UInt32 = 1024) throws {
+                try cpu.writeData(read ? 1 : 0, cpu.registers.sp, width: 4)
+                cpu.registers[0] = buffer
+                cpu.registers[1] = count
+                cpu.registers[2] = UInt32(truncatingIfNeeded: block)
+                cpu.registers[3] = UInt32(block >> 32)
+                GuestDiskBridge.transfer(cpu, disk: disk)
+            }
+            let high = (UInt64(5) << 30) / 512
+            try transfer(block: high, read: false)
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(cpu.registers[1], 1024)
+            try ram.writeBytes(Data(repeating: 0, count: 1024), at: buffer)
+            try transfer(block: high, read: true)
+            XCTAssertEqual(try ram.readBytes(1024, at: buffer), payload)
+            try transfer(block: UInt64(disk.blockCount - 1), read: true)
+            XCTAssertEqual(cpu.registers[1], 512)
+            try transfer(block: UInt64(disk.blockCount), read: true)
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(cpu.registers[1], 0)
+            try transfer(block: UInt64(disk.blockCount + 1), read: true)
+            XCTAssertEqual(cpu.registers[0], UInt32(EINVAL))
+            try transfer(block: UInt64.max, read: true)
+            XCTAssertEqual(cpu.registers[0], UInt32(EINVAL))
+        }
+    }
+
+    func testCapacityIoctlsAndUnknownKernelRejection() throws {
+        try withDisk { _, disk in
+            let ram = FlatPhysicalMemory(length: 4 << 20, baseAddress: 0x8000_0000)
+            let cpu = ARMv7CPU(memory: ram, jit: nil)
+            try cpu.writeData(512, GuestDiskBridge.md0 + 16, width: 4)
+            GuestDiskBridge.install(on: cpu, disk: disk)
+            let ioctl = try XCTUnwrap(cpu.nativeFunctions[GuestDiskBridge.ioctlAddress])
+            let output: UInt32 = 0x8000_1000
+            cpu.registers[0] = 0
+            cpu.registers[1] = 0x4008_6419
+            cpu.registers[2] = output
+            XCTAssertTrue(ioctl(cpu))
+            XCTAssertEqual(cpu.registers[0], 0)
+            XCTAssertEqual(try cpu.readData(output, width: 4), UInt32(disk.blockCount))
+            XCTAssertEqual(try cpu.readData(output + 4, width: 4), 0)
+            XCTAssertThrowsError(try GuestDiskBridge.patch(Data(repeating: 0, count: 64)))
+        }
+    }
+}
