@@ -2,9 +2,7 @@
 // interface feeds IP packets to the host through a private emulator call.
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-#include <sys/kern_control.h>
 #include <net/if.h>
-#include <net/route.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -17,6 +15,26 @@
 #include <dlfcn.h>
 #include <netdb.h>
 #include <sys/time.h>
+
+// Public iOS SDKs omit these legacy kernel-control/routing declarations.
+// Layouts/constants are the 32-bit XNU 2050 ABI, not the host Mac ABI.
+#define SYSPROTO_CONTROL 2
+#define AF_SYS_CONTROL 2
+#define CTLIOCGINFO 0xc0644e03UL
+#define SIOCAIFADDR 0x8040691aUL
+#define SIOCSIFMTU 0x80206934UL
+#define RTM_VERSION 5
+#define RTM_ADD 1
+#define RTF_UP 1
+#define RTF_GATEWAY 2
+#define RTF_STATIC 0x800
+#define RTA_DST 1
+#define RTA_GATEWAY 2
+#define RTA_NETMASK 4
+struct ctl_info { unsigned ctl_id; char ctl_name[96]; };
+struct sockaddr_ctl { unsigned char sc_len,sc_family; unsigned short ss_sysaddr; unsigned sc_id,sc_unit,sc_reserved[5]; };
+struct legacy_alias { char ifra_name[16]; struct sockaddr ifra_addr,ifra_broadaddr,ifra_mask; };
+struct legacy_route { unsigned short rtm_msglen; unsigned char rtm_version,rtm_type; unsigned short rtm_index,padding; int rtm_flags,rtm_addrs,rtm_pid,rtm_seq,rtm_errno,rtm_use; unsigned rtm_inits,metrics[14]; };
 
 static unsigned bridge(unsigned op, void *data, unsigned length) {
     register unsigned r0 __asm__("r0") = op;
@@ -78,14 +96,14 @@ int main(void) {
     char name[IFNAMSIZ]={0}; socklen_t length=sizeof(name);
     if(getsockopt(tunnel,SYSPROTO_CONTROL,2,name,&length)) { logline("utun name failed"); return 1; }
     int config=socket(AF_INET,SOCK_DGRAM,0);
-    struct ifaliasreq alias={0}; strcpy(alias.ifra_name,name);
+    struct legacy_alias alias={0}; strcpy(alias.ifra_name,name);
     *(struct sockaddr_in *)&alias.ifra_addr=address("10.0.2.15");
     *(struct sockaddr_in *)&alias.ifra_broadaddr=address("10.0.2.2");
     *(struct sockaddr_in *)&alias.ifra_mask=address("255.255.255.255");
     if(ioctl(config,SIOCAIFADDR,&alias)) { logline("utun address failed"); return 1; }
     struct ifreq req={0}; strcpy(req.ifr_name,name); req.ifr_mtu=1400;
     ioctl(config,SIOCSIFMTU,&req); close(config);
-    struct { struct rt_msghdr header; struct sockaddr_in destination,gateway,mask; } route={0};
+    struct { struct legacy_route header; struct sockaddr_in destination,gateway,mask; } route={0};
     route.header.rtm_msglen=sizeof(route); route.header.rtm_version=RTM_VERSION;
     route.header.rtm_type=RTM_ADD; route.header.rtm_flags=RTF_UP|RTF_GATEWAY|RTF_STATIC;
     route.header.rtm_addrs=RTA_DST|RTA_GATEWAY|RTA_NETMASK; route.header.rtm_seq=1;
