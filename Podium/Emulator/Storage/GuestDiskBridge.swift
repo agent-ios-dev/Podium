@@ -38,7 +38,7 @@ enum GuestDiskBridge {
 
     static func install(on cpu: ARMv7CPU, disk: FileBackedStorage) {
         if ProcessInfo.processInfo.environment["PODIUM_DISK_TRACE"] == "1" {
-            for site: UInt32 in [strategyAddress, 0x8009_76D4, 0x8009_76D8] {
+            for site in [strategyAddress, UInt32(0x8009_76D4), UInt32(0x8009_76D8)] {
                 cpu.nativeFunctions[site] = { c in
                     let bp = site == strategyAddress ? c.registers[0] : c.registers[4]
                     let data = (try? c.readData(bp + 60, width: 4)) ?? 0
