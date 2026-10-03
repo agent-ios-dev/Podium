@@ -89,7 +89,15 @@ enum GuestDiskBridge {
             while checked < count {
                 let address = buffer + UInt32(checked)
                 let length = min(4096 - Int(address & 4095), count - checked)
-                guard let pointer = cpu.hostAddress(ofVirtual: address, for: reading ? .write : .read) else { throw FileBackedStorage.IOError(code: EFAULT) }
+                guard let pointer = cpu.hostAddress(ofVirtual: address, for: reading ? .write : .read) else {
+                    do {
+                        let physical = try cpu.translatedAddress(address, access: reading ? .write : .read)
+                        print("[md0] I/O buffer VA=\(address.hexString8) PA=\(physical.hexString8) is not backed by RAM")
+                    } catch {
+                        print("[md0] I/O buffer VA=\(address.hexString8) count=\(count) flags=\(flags.hexString8) translation failed: \(error)")
+                    }
+                    throw FileBackedStorage.IOError(code: EFAULT)
+                }
                 pages.append((pointer, length))
                 checked += length
             }
