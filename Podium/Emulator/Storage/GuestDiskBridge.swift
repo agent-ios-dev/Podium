@@ -37,6 +37,17 @@ enum GuestDiskBridge {
     }
 
     static func install(on cpu: ARMv7CPU, disk: FileBackedStorage) {
+        if ProcessInfo.processInfo.environment["PODIUM_DISK_TRACE"] == "1" {
+            for site: UInt32 in [strategyAddress, 0x8009_76D4, 0x8009_76D8] {
+                cpu.nativeFunctions[site] = { c in
+                    let bp = site == strategyAddress ? c.registers[0] : c.registers[4]
+                    let data = (try? c.readData(bp + 60, width: 4)) ?? 0
+                    let mapped = (try? c.readData(c.registers.sp + 8, width: 4)) ?? 0
+                    print("[md0trace] pc=\(site.hexString8) bp=\(bp.hexString8) datap=\(data.hexString8) sp=\(c.registers.sp.hexString8) mapped=\(mapped.hexString8) r0=\(c.registers[0].hexString8) r1=\(c.registers[1].hexString8)")
+                    return false
+                }
+            }
+        }
         cpu.nativeFunctions[transferAddress] = { cpu in transfer(cpu, disk: disk); return true }
         cpu.nativeFunctions[ioctlAddress] = { cpu in
             // Other md devices and all unrelated ioctls retain XNU behavior.
