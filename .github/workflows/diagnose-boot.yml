@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   diagnose:
-    runs-on: macos-15-arm64
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
