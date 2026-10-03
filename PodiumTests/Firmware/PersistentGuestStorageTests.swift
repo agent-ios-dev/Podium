@@ -378,6 +378,23 @@ final class PersistentGuestStorageTests: XCTestCase {
         XCTAssertEqual(Data(try builder.contents(of: "/usr/share/podium/gzip.txt")), Data("compressed data".utf8))
     }
 
+    func testOfflineDebianInstallSupportsXZArchives() throws {
+        let firmwareURL = temporaryDirectory.appendingPathComponent("xz-deb.ipsw")
+        let imageURL = RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL)
+        try writeSyntheticHFSVolume(at: imageURL)
+        let packageURL = try makeDebPackage(name: "com.example.xz", version: "1", xz: true, files: [
+            .file(path: "usr/share/podium/xz.txt", contents: Data("xz payload".utf8), mode: 0o644),
+        ])
+
+        _ = try RootFilesystemPreparer.installDebianPackages(
+            [packageURL], to: imageURL,
+            stagingDirectory: temporaryDirectory.appendingPathComponent("xz-stage", isDirectory: true)
+        )
+        let volume = try HFSPlusVolume(source: FileVolumeSource(url: imageURL))
+        let builder = try RootFilesystemBuilder(volume: volume)
+        XCTAssertEqual(Data(try builder.contents(of: "/usr/share/podium/xz.txt")), Data("xz payload".utf8))
+    }
+
     func testOfflineDebianInstallRejectsPackageMutationOfDpkgDatabase() throws {
         let firmwareURL = temporaryDirectory.appendingPathComponent("dpkg-deb.ipsw")
         let imageURL = RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL)
@@ -479,7 +496,7 @@ final class PersistentGuestStorageTests: XCTestCase {
     }
 
     private func makeDebPackage(name: String, version: String, depends: String? = nil, script: String? = nil,
-                                gzip: Bool = false, files: [DebTarEntry]) throws -> URL {
+                                gzip: Bool = false, xz: Bool = false, files: [DebTarEntry]) throws -> URL {
         let controlURL = temporaryDirectory.appendingPathComponent("control-\(UUID().uuidString)")
         let controlPath = "Package: \(name)\nVersion: \(version)\nArchitecture: iphoneos-arm\n"
             + (depends.map { "Depends: \($0)\n" } ?? "")
@@ -488,10 +505,14 @@ final class PersistentGuestStorageTests: XCTestCase {
         if let script { controlEntries.append(.file(path: script, contents: Data("#!/bin/sh\nexit 0\n".utf8), mode: 0o755)) }
         let controlTar = makeTar(controlEntries)
         let dataTar = makeTar(files)
+        let controlName = xz ? "control.tar.xz" : (gzip ? "control.tar.gz" : "control.tar")
+        let dataName = xz ? "data.tar.xz" : (gzip ? "data.tar.gz" : "data.tar")
+        let controlContents = xz ? makeXZ(controlTar) : (gzip ? makeGzip(controlTar) : controlTar)
+        let dataContents = xz ? makeXZ(dataTar) : (gzip ? makeGzip(dataTar) : dataTar)
         var archive = Data("!<arch>\n".utf8)
         appendArMember("debian-binary", contents: Data("2.0\n".utf8), to: &archive)
-        appendArMember(gzip ? "control.tar.gz" : "control.tar", contents: gzip ? makeGzip(controlTar) : controlTar, to: &archive)
-        appendArMember(gzip ? "data.tar.gz" : "data.tar", contents: gzip ? makeGzip(dataTar) : dataTar, to: &archive)
+        appendArMember(controlName, contents: controlContents, to: &archive)
+        appendArMember(dataName, contents: dataContents, to: &archive)
         try archive.write(to: controlURL)
         return controlURL
     }
@@ -559,6 +580,20 @@ final class PersistentGuestStorageTests: XCTestCase {
         appendLittleEndian(crc32(data), to: &gzip)
         appendLittleEndian(UInt32(truncatingIfNeeded: data.count), to: &gzip)
         return gzip
+    }
+
+    private func makeXZ(_ data: Data) -> Data {
+        var compressed = Data(count: data.count + max(4_096, data.count / 2))
+        let compressedCount = compressed.withUnsafeMutableBytes { output in
+            data.withUnsafeBytes { input in
+                guard let outputBase = output.bindMemory(to: UInt8.self).baseAddress,
+                      let inputBase = input.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_encode_buffer(outputBase, output.count, inputBase, data.count, nil, COMPRESSION_LZMA)
+            }
+        }
+        precondition(compressedCount > 0, "fixture xz compression buffer must fit")
+        compressed.removeSubrange(compressedCount..<compressed.count)
+        return compressed
     }
 
     private func appendLittleEndian(_ value: UInt32, to data: inout Data) {

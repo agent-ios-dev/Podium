@@ -75,7 +75,8 @@ enum DebianPackageInstaller {
 
     private enum ArchiveFormat {
         case tar
-        case gzipTar}
+        case gzipTar
+        case xzTar}
 
 
     private static let maximumArchiveSize = 256 << 20
@@ -275,13 +276,15 @@ enum DebianPackageInstaller {
         let controlArchive: Data
         let controlFormat: ArchiveFormat
         if let gzip = members["control.tar.gz"] { controlArchive = gzip; controlFormat = .gzipTar }
+        else if let xz = members["control.tar.xz"] { controlArchive = xz; controlFormat = .xzTar }
         else if let tar = members["control.tar"] { controlArchive = tar; controlFormat = .tar }
-        else { throw PackageError.unsupported("control.tar.gz or control.tar is required") }
+        else { throw PackageError.unsupported("control.tar.gz, control.tar.xz, or control.tar is required") }
         let dataArchive: Data
         let dataFormat: ArchiveFormat
         if let gzip = members["data.tar.gz"] { dataArchive = gzip; dataFormat = .gzipTar }
+        else if let xz = members["data.tar.xz"] { dataArchive = xz; dataFormat = .xzTar }
         else if let tar = members["data.tar"] { dataArchive = tar; dataFormat = .tar }
-        else { throw PackageError.unsupported("data.tar.gz or data.tar is required; xz/lzma payloads aren't supported") }
+        else { throw PackageError.unsupported("data.tar.gz, data.tar.xz, or data.tar is required; zstd and legacy lzma payloads aren't supported") }
         let controlTar = try unpack(controlArchive, format: controlFormat, maximum: min(maximumControlSize, maximumExpandedBytes))
         guard controlTar.count <= maximumControlSize else { throw PackageError.unsupported("control archive exceeds its size limit") }
         let control = try parseTar(controlTar, staging: staging, controlMode: true,
@@ -336,6 +339,8 @@ enum DebianPackageInstaller {
             return data
         case .gzipTar:
             return try gunzip(data, maximumOutput: maximum)
+        case .xzTar:
+            return try decompressXZ(data, maximumOutput: maximum)
         }}
 
 
@@ -427,6 +432,45 @@ enum DebianPackageInstaller {
         guard crc32(output) == data.readUInt32LE(at: compressedEnd),
               UInt32(truncatingIfNeeded: output.count) == data.readUInt32LE(at: compressedEnd + 4) else {
             throw PackageError.invalidArchive("gzip checksum mismatch")
+        }
+        return output}
+
+
+    /// Debian's `data.tar.xz` uses the XZ container with an LZMA2 stream.
+    /// Apple's Compression framework decodes that format directly.
+    private static func decompressXZ(_ data: Data, maximumOutput: Int) throws -> Data {
+        guard data.count >= 24, data.prefix(6) == Data([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]), maximumOutput >= 0 else {
+            throw PackageError.invalidArchive("invalid or truncated xz stream")
+        }
+        var output = Data()
+        let stream = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
+        defer { stream.deallocate() }
+        guard compression_stream_init(stream, COMPRESSION_STREAM_DECODE, COMPRESSION_LZMA) == COMPRESSION_STATUS_OK else {
+            throw PackageError.unsupported("couldn't initialize xz decompression")
+        }
+        defer { compression_stream_destroy(stream) }
+        let chunkSize = 1 << 20
+        let chunk = UnsafeMutablePointer<UInt8>.allocate(capacity: chunkSize)
+        defer { chunk.deallocate() }
+        try data.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { throw PackageError.invalidArchive("empty xz stream") }
+            stream.pointee.src_ptr = base
+            stream.pointee.src_size = data.count
+            var finished = false
+            while !finished {
+                stream.pointee.dst_ptr = chunk
+                stream.pointee.dst_size = chunkSize
+                let state = compression_stream_process(stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                guard state != COMPRESSION_STATUS_ERROR else { throw PackageError.invalidArchive("corrupt xz stream") }
+                let count = chunkSize - stream.pointee.dst_size
+                guard count <= maximumOutput, output.count <= maximumOutput - count else {
+                    throw PackageError.unsupported("expanded archive exceeds size limit")
+                }
+                if count > 0 { output.append(chunk, count: count) }
+                if state == COMPRESSION_STATUS_END { finished = true }
+                else if count == 0 && stream.pointee.src_size == 0 { throw PackageError.invalidArchive("incomplete xz stream") }
+            }
+            guard stream.pointee.src_size == 0 else { throw PackageError.invalidArchive("trailing xz data") }
         }
         return output}
 

@@ -274,7 +274,7 @@ struct SettingsScreen: View {
                             isImportingGuestFiles = true
                         }
                         cardDivider
-                        actionRow("Offline Packages", detail: "Install supported Debian .deb files", systemImage: "shippingbox",
+                        actionRow("Offline Packages", detail: "Install tar, gzip, and xz .deb payloads offline", systemImage: "shippingbox",
                                   isDisabled: !canModifyGuestStorage || isInstallingPackages || isInstallingIPAs) {
                             isImportingPackages = true
                         }
