@@ -5,6 +5,7 @@ struct EmulatorScreen: View {
     @Environment(EmulatorCore.self) private var emulatorCore
     @State private var touchActive = false
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
+    @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
 
     private var firmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
@@ -108,7 +109,8 @@ struct EmulatorScreen: View {
             }
 
             if !emulatorCore.isPoweredOn, emulatorCore.bootStage == nil,
-               !emulatorCore.isBusy, let firmware, firmware.compatibility.isCompatible {
+               !emulatorCore.isBusy, let firmware,
+               firmware.compatibility.isCompatible || experimentalFirmware {
                 Button {
                     powerOn(firmware)
                 } label: {

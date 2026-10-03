@@ -5,6 +5,8 @@ import Foundation
 enum AppStorageKeys {
     static let appearance = "podium.appearance"
     static let iPodCase = "podium.iPodCase"
+    static let experimentalAudio = "podium.experimentalAudio"
+    static let experimentalFirmware = "podium.experimentalFirmware"
     static let confirmBeforeDeletingFirmware = "podium.confirmBeforeDeletingFirmware"
     static let showDeveloperSettings = "podium.showDeveloperSettings"
     static let showFrameRate = "podium.showFrameRate"

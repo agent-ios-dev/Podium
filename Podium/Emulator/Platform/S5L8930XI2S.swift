@@ -15,17 +15,22 @@ final class S5L8930XI2S: MMIODevice, DMAEndpoint {
     private var lastTick: UInt64?
     private var fraction: Double = 0
     private(set) var sampleRate: Double = 44_100
+    /// The original firmware path leaves audio MMIO inert. Enable this only
+    /// when the user opts into the experimental host-audio bridge.
+    private(set) var transportEnabled = false
     var dmaRequest: (() -> Void)?
     var clockChanged: (() -> Void)?
     var onSamples: (([Float]) -> Void)?
     var onFormat: ((Double) -> Void)?
-    private var active: Bool { registers[0] & 1 != 0 && registers[2] & 2 != 0 }
+    private var active: Bool { transportEnabled && (registers[0] & 1) != 0 && (registers[2] & 2) != 0 }
     var isActive: Bool { active }
-    var dmaSpace: Int { fifo.count - count }
+    // Once TX is shut down, the guest may still notify CDMA while tearing
+    // down its command ring. Don't let that DMA restart against a stopped port.
+    var dmaSpace: Int { transportEnabled && (registers[2] & 2) != 0 ? fifo.count - count : 0 }
     var dmaAvailable: Int { 0 }
     func dmaPop() -> UInt8 { 0 }
     func dmaPush(_ byte: UInt8) {
-        guard count < fifo.count else { return }
+        guard transportEnabled, registers[2] & 2 != 0, count < fifo.count else { return }
         fifo[(head + count) % fifo.count] = byte; count += 1
     }
     private func pop() -> UInt8 {
@@ -38,9 +43,13 @@ final class S5L8930XI2S: MMIODevice, DMAEndpoint {
         traceAccess?("I2S sample rate \(sampleRate)")
     }
 
+    func enableOutputTransport() { transportEnabled = true }
+
     func readRegister(at offset: UInt32) -> UInt32 {
         let value = registers[Int(offset / 4)]
-        return offset == 0 ? (active ? value & ~Self.controlChannelIdle : value | Self.controlChannelIdle) : value
+        return offset == 0 && transportEnabled
+            ? (active ? value & ~Self.controlChannelIdle : value | Self.controlChannelIdle)
+            : (offset == 0 ? value | Self.controlChannelIdle : value)
     }
 
     func writeRegister(_ value: UInt32, at offset: UInt32) {

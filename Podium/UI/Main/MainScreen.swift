@@ -3,13 +3,15 @@ import SwiftUI
 struct MainScreen: View {
     @Environment(FirmwareLibrary.self) private var firmwareLibrary
     @Environment(ReferenceFirmwareDownloader.self) private var downloader
+    @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
 
     private var activeFirmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
     }
 
     private var canLaunch: Bool {
-        activeFirmware?.compatibility.isCompatible ?? false
+        guard let activeFirmware else { return false }
+        return activeFirmware.compatibility.isCompatible || experimentalFirmware
     }
 
     var body: some View {
@@ -73,6 +75,13 @@ struct MainScreen: View {
                 Text(activeFirmware == nil ? "Import compatible firmware to begin." : "The selected firmware is not compatible.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if experimentalFirmware, let firmware = activeFirmware,
+               !firmware.compatibility.isCompatible {
+                Text("Experimental firmware can hang or panic. This emulator has iPod touch 4 hardware; other models may not boot, and encrypted files need matching keys.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
             }
         }

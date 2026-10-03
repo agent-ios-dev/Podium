@@ -132,10 +132,12 @@ final class EmulatorCore {
             }
             let rootFilesystem = userImage.url
             let output = audioOutput
+            let audioEnabled = UserDefaults.standard.bool(forKey: AppStorageKeys.experimentalAudio)
             let session = try await Task.detached(priority: .userInitiated) {
                 let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: fileURL)
                 let deviceTree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: fileURL)
-                return try EmulationSession(kernel: kernel, deviceTree: deviceTree, rootFilesystem: rootFilesystem, persistent: true, audioOutput: output)
+                return try EmulationSession(kernel: kernel, deviceTree: deviceTree, rootFilesystem: rootFilesystem,
+                                            persistent: true, audioOutput: output, audioEnabled: audioEnabled)
             }.value
             session.onFinish = { [weak self, weak session] state in
                 Task { @MainActor in

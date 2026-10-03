@@ -19,6 +19,8 @@ struct SettingsScreen: View {
 
     @AppStorage(AppStorageKeys.appearance) private var appearanceRawValue = AppearanceOption.dark.rawValue
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
+    @AppStorage(AppStorageKeys.experimentalAudio) private var experimentalAudio = false
+    @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
     @AppStorage(AppStorageKeys.confirmBeforeDeletingFirmware) private var confirmBeforeDeleting = true
     @AppStorage(AppStorageKeys.showDeveloperSettings) private var showDeveloperSettings = false
 
@@ -155,6 +157,31 @@ struct SettingsScreen: View {
                             Text("Классический чёрный корпус с кнопкой Home вокруг экрана iPod.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+
+                        cardDivider
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Toggle("Allow experimental iOS builds", isOn: $experimentalFirmware)
+                            Text("Allows boot attempts for any imported IPSW, including iPod touch 5. Podium still emulates iPod touch 4 hardware, so another model may fail; encrypted files require matching keys.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if experimentalFirmware {
+                                Text("Experimental builds may stop at boot or panic. Use a separate virtual iPod for testing.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+
+                        cardDivider
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Toggle("Experimental audio output", isOn: $experimentalAudio)
+                            Text("Sends guest audio through the phone speaker. This option is off by default while I fix the guest CDMA stop panic.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         cardDivider

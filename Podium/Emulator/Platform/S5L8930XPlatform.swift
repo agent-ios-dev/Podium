@@ -119,9 +119,6 @@ final class S5L8930XPlatform: DeviceEventHandler {
         spi1.slave = touch
         cdma.attach(spi1, dataRegister: Self.spi1Base + S5L8930XSPI.transmitData)
         cdma.attach(spi1, dataRegister: Self.spi1Base + S5L8930XSPI.receiveData)
-        cdma.attach(i2s0, dataRegister: Self.i2s0Base + S5L8930XI2S.transmitData)
-        i2s0.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
-        i2s0.clockChanged = { [unowned self] in self.rescheduleNextEvent() }
         spi1.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
         touch.setAttention = { [unowned self] asserted in
             self.gpio.setInputLevel(!asserted, pin: S5L8930XGPIO.Pin.touchInterrupt)
@@ -134,6 +131,17 @@ final class S5L8930XPlatform: DeviceEventHandler {
         }
         cpu.deviceEventHandler = self
         rescheduleNextEvent()
+    }
+
+    /// Opts into the experimental I²S DMA path only when host audio is enabled.
+    /// The default boot keeps this peripheral inert, matching the known-good
+    /// firmware path while the audio implementation is being validated.
+    func enableAudioOutput() {
+        guard !i2s0.transportEnabled else { return }
+        i2s0.enableOutputTransport()
+        cdma.attach(i2s0, dataRegister: Self.i2s0Base + S5L8930XI2S.transmitData)
+        i2s0.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
+        i2s0.clockChanged = { [unowned self] in self.rescheduleNextEvent() }
     }
 
     /// The MMIO regions to put on the bus — ahead of the generic

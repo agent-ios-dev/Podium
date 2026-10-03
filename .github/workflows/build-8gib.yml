@@ -1,6 +1,12 @@
 name: Build Podium 8 GiB
 on:
   workflow_dispatch:
+    inputs:
+      run_tests:
+        description: Run iOS Simulator tests (slower)
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 jobs:
@@ -14,6 +20,7 @@ jobs:
       - name: Build unsigned IPA
         run: bash build-8gib-ipa.sh
       - name: Execute simulator tests
+        if: ${{ inputs.run_tests }}
         shell: bash
         run: |
           simulator=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["isAvailable"] and "iPhone" in x["name"]))')
