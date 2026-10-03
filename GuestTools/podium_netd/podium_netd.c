@@ -21,6 +21,8 @@
 #define SYSPROTO_CONTROL 2
 #define AF_SYS_CONTROL 2
 #define CTLIOCGINFO 0xc0644e03UL
+#undef SIOCAIFADDR
+#undef SIOCSIFMTU
 #define SIOCAIFADDR 0x8040691aUL
 #define SIOCSIFMTU 0x80206934UL
 #define RTM_VERSION 5
@@ -52,7 +54,7 @@ static struct sockaddr_in address(const char *ip) {
 static void install_cydia(void) {
     if (access("/Applications/Cydia.app/Cydia", F_OK) || !access("/private/var/lib/podium-cydia-ready", F_OK)) return;
     pid_t child=fork();
-    if (!child) { execl("/usr/bin/uicache", "uicache", (char *)0); _exit(1); }
+    if (!child) { setgid(501); setuid(501); execl("/usr/bin/uicache", "uicache", (char *)0); _exit(1); }
     int status=1; if(child>0) waitpid(child,&status,0);
     if(status==0) { FILE *f=fopen("/private/var/lib/podium-cydia-ready","w"); if(f) fclose(f); logline("Cydia uicache completed"); }
 }
@@ -86,7 +88,6 @@ static void probe(void) {
     else logline("HTTP test response failed"); close(fd); _exit(0);
 }
 int main(void) {
-    install_cydia();
     int tunnel=socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
     struct ctl_info info={0}; strcpy(info.ctl_name,"com.apple.net.utun_control");
     if(tunnel<0 || ioctl(tunnel,CTLIOCGINFO,&info)) { logline("utun lookup failed"); return 1; }
@@ -121,6 +122,7 @@ int main(void) {
     publish("State:/Network/Service/Podium/DNS",dns); publish("State:/Network/Global/DNS",dns);
     fcntl(tunnel,F_SETFL,O_NONBLOCK);
     logline("utun configured 10.0.2.15 -> 10.0.2.2");
+    if(fork()==0) { sleep(10); install_cydia(); _exit(0); }
     if(bridge(4,0,0) && fork()==0) { sleep(3); probe(); }
     unsigned char packet[65536];
     for(;;) {
