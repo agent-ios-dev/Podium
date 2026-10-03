@@ -28,7 +28,7 @@ final class PacketNetwork: NetworkInterface {
             connection=c; source=s; destination=d; sourcePort=sp; destinationPort=dp; expected=seq &+ 1
         }
     }
-    func stop() { queue.async { self.closed=true; self.flows.values.forEach { $0.connection.cancel() }; self.flows.removeAll() } }
+    func stop() { queue.async { self.closed=true; self.flows.values.forEach { $0.connection.stateUpdateHandler=nil; $0.connection.cancel() }; self.flows.removeAll() } }
     func send(_ packet: Data) { queue.async { if !self.closed { self.consume([UInt8](packet)) } } }
     private func consume(_ p: [UInt8]) {
         guard p.count >= 20, p[0] >> 4 == 4 else { return }
@@ -40,15 +40,15 @@ final class PacketNetwork: NetworkInterface {
             let body=Array(p[(h+8)..<(h+Int(Self.u16(p,h+4)))])
             if dp==53 { dns(body,s,d,sp,dp); return }
             let c=NWConnection(host: NWEndpoint.Host(d.map(String.init).joined(separator:".")), port: NWEndpoint.Port(rawValue:dp)!, using:.udp)
-            c.stateUpdateHandler = { state in if case .ready=state { c.send(content:Data(body),completion:.contentProcessed { _ in }); c.receiveMessage { data,_,_,_ in if let data { self.udp([UInt8](data),s,d,sp,dp) }; c.cancel() } } }
-            c.start(queue:queue); queue.asyncAfter(deadline:.now()+15) { c.cancel() }; return
+            c.stateUpdateHandler = { state in if case .ready=state { c.send(content:Data(body),completion:.contentProcessed { _ in }); c.receiveMessage { data,_,_,_ in if let data { self.udp([UInt8](data),s,d,sp,dp) }; c.stateUpdateHandler=nil; c.cancel() } } }
+            c.start(queue:queue); queue.asyncAfter(deadline:.now()+15) { c.stateUpdateHandler=nil; c.cancel() }; return
         }
         guard p[9]==6, size>=h+20 else { return }
         let th=Int(p[h+12]>>4)*4
         guard th>=20, h+th<=size, dp != 0 else { return }
         let seq=Self.u32(p,h+4), ack=Self.u32(p,h+8), flags=p[h+13]
         let key="\(s)-\(sp)-\(d)-\(dp)"
-        if flags&4 != 0 { flows.removeValue(forKey:key)?.connection.cancel(); return }
+        if flags&4 != 0 { if let f=flows.removeValue(forKey:key) { f.connection.stateUpdateHandler=nil; f.connection.cancel() }; return }
         if flows[key]==nil, flags&2 != 0 {
             guard flows.count<128 else { return }
             let c=NWConnection(host:NWEndpoint.Host(d.map(String.init).joined(separator:".")),port:NWEndpoint.Port(rawValue:dp)!,using:.tcp)
@@ -56,7 +56,7 @@ final class PacketNetwork: NetworkInterface {
             c.stateUpdateHandler = { state in
                 switch state {
                 case .ready: f.ready=true; self.tcp(f,flags:0x12); self.retransmit(f,key:key)
-                case .failed: self.tcp(f,flags:0x14,remember:false); self.flows.removeValue(forKey:key); c.cancel()
+                case .failed: self.tcp(f,flags:0x14,remember:false); self.flows.removeValue(forKey:key); c.stateUpdateHandler=nil; c.cancel()
                 default: break
                 }
             }
@@ -109,7 +109,7 @@ final class PacketNetwork: NetworkInterface {
     private func retransmit(_ f: Flow,key: String) {
         queue.asyncAfter(deadline:.now()+1) {
             guard self.flows[key] === f, !self.closed else { return }
-            if Date().timeIntervalSince(f.lastActivity)>120 { f.connection.cancel(); self.flows.removeValue(forKey:key); return }
+            if Date().timeIntervalSince(f.lastActivity)>120 { f.connection.stateUpdateHandler=nil; f.connection.cancel(); self.flows.removeValue(forKey:key); return }
             for (_,p,date) in f.pending where Date().timeIntervalSince(date)>=1 { self.onReceive?(p) }
             self.retransmit(f,key:key)
         }
