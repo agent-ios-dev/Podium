@@ -6,6 +6,7 @@ struct EmulatorScreen: View {
     @State private var touchActive = false
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
     @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
+    @AppStorage(AppStorageKeys.experimentalDisplayResolution) private var displayResolutionDivisor = 1
 
     private var firmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
@@ -16,7 +17,7 @@ struct EmulatorScreen: View {
     @ViewBuilder
     private var screen: some View {
         if emulatorCore.bootStage == .running, let source = emulatorCore.framebufferSource {
-            GuestFramebufferView(source: source)
+            GuestFramebufferView(source: source, resolutionDivisor: displayResolutionDivisor)
         } else {
             BootProgressView(stage: emulatorCore.bootStage, instructionsPerSecond: emulatorCore.instructionsPerSecond)
         }
@@ -66,7 +67,7 @@ struct EmulatorScreen: View {
                 .padding(.bottom, max(geometry.safeAreaInsets.bottom == 0 ? 18 : 8, 8))
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, iPodCase ? 28 : 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemBackground))
             .ignoresSafeArea(edges: .bottom)

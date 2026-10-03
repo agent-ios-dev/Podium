@@ -21,6 +21,7 @@ struct SettingsScreen: View {
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
     @AppStorage(AppStorageKeys.experimentalAudio) private var experimentalAudio = false
     @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
+    @AppStorage(AppStorageKeys.experimentalDisplayResolution) private var displayResolutionDivisor = 1
     @AppStorage(AppStorageKeys.confirmBeforeDeletingFirmware) private var confirmBeforeDeleting = true
     @AppStorage(AppStorageKeys.showDeveloperSettings) private var showDeveloperSettings = false
 
@@ -172,6 +173,22 @@ struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(.orange)
                             }
+                        }
+
+                        cardDivider
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Experimental display resolution")
+                                .font(.subheadline.weight(.medium))
+                            Picker("Display resolution", selection: $displayResolutionDivisor) {
+                                Text("640 × 960").tag(1)
+                                Text("320 × 480").tag(2)
+                                Text("160 × 240").tag(4)
+                            }
+                            .pickerStyle(.segmented)
+                            Text("Changes rendered image detail. The emulated iPod hardware remains 640 × 960.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         cardDivider

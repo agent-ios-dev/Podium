@@ -12,13 +12,15 @@ import UIKit
 /// that one copy. Touches pass through to the SwiftUI gesture around it.
 struct GuestFramebufferView: UIViewRepresentable {
     let source: FramebufferSource
+    var resolutionDivisor = 1
 
     func makeUIView(context: Context) -> FramebufferMetalView {
-        FramebufferMetalView(source: source)
+        FramebufferMetalView(source: source, resolutionDivisor: resolutionDivisor)
     }
 
     func updateUIView(_ view: FramebufferMetalView, context: Context) {
         view.source = source
+        view.resolutionDivisor = max(1, resolutionDivisor)
     }
 
     static func dismantleUIView(_ view: FramebufferMetalView, coordinator: ()) {
@@ -60,13 +62,15 @@ final class FramebufferMetalView: UIView {
         return out;
     }
 
-    fragment float4 frameFragment(Varyings in [[stage_in]], texture2d<float> frame [[texture(0)]], sampler linear [[sampler(0)]]) {
-        return float4(frame.sample(linear, in.uv).rgb, 1.0);
+    fragment float4 frameFragment(Varyings in [[stage_in]], texture2d<float> frame [[texture(0)]], sampler linear [[sampler(0)]], constant float2& outputSize [[buffer(0)]]) {
+        float2 uv = floor(in.uv * outputSize) / outputSize;
+        return float4(frame.sample(linear, uv).rgb, 1.0);
     }
     """
 
-    init(source: FramebufferSource) {
+    init(source: FramebufferSource, resolutionDivisor: Int) {
         self.source = source
+        self.resolutionDivisor = max(1, resolutionDivisor)
         let device = MTLCreateSystemDefaultDevice()
         self.device = device
         queue = device?.makeCommandQueue()
@@ -162,6 +166,9 @@ final class FramebufferMetalView: UIView {
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentTexture(frame.texture, index: 0)
             encoder.setFragmentSamplerState(sampler, index: 0)
+            var outputSize = SIMD2<Float>(Float(max(1, frame.texture.width / max(1, resolutionDivisor))),
+                                          Float(max(1, frame.texture.height / max(1, resolutionDivisor))))
+            encoder.setFragmentBytes(&outputSize, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }

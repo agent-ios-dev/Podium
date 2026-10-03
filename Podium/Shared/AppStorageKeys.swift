@@ -7,6 +7,7 @@ enum AppStorageKeys {
     static let iPodCase = "podium.iPodCase"
     static let experimentalAudio = "podium.experimentalAudio"
     static let experimentalFirmware = "podium.experimentalFirmware"
+    static let experimentalDisplayResolution = "podium.experimentalDisplayResolution"
     static let confirmBeforeDeletingFirmware = "podium.confirmBeforeDeletingFirmware"
     static let showDeveloperSettings = "podium.showDeveloperSettings"
     static let showFrameRate = "podium.showFrameRate"
