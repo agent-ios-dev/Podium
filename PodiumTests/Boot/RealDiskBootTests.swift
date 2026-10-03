@@ -20,7 +20,7 @@ final class RealDiskBootTests: XCTestCase {
         let image = try RootFilesystemPreparer.prepare(firmwareAt: ipsw, keybagBootstrap: [UInt8](keybag),
             syncDaemon: [UInt8](sync), firstBootState: state, bootReadFiles: RootFilesystemRecipe.fileList(readFiles))
         let builder = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
-        XCTAssertTrue(builder.contains(IOSRootCertificateInstaller.trustStorePath), "The reference iOS 6 root filesystem must contain its TrustStore")
+        XCTAssertTrue(IOSRootCertificateInstaller.supportedTrustStorePaths.contains(where: builder.contains), "The reference iOS 6 root filesystem must contain a TrustStore")
         XCTAssertFalse(try IOSRootCertificateInstaller.apply(to: builder), "The prepared TrustStore must already contain the verified ISRG Root X1 record")
     }
 

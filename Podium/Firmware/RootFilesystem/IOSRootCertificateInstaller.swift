@@ -8,6 +8,8 @@ import SQLite3
 /// certificate subject is inserted or updated.
 enum IOSRootCertificateInstaller {
     static let trustStorePath = "/private/var/Keychains/TrustStore.sqlite3"
+    static let systemTrustStorePath = "/System/Library/Frameworks/Security.framework/TrustStore.sqlite3"
+    static let supportedTrustStorePaths = [trustStorePath, systemTrustStorePath]
     static let certificateResource = "ISRGRootX1.cer"
     private static let expectedSHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
     private static let trustSettings = Data("""
@@ -53,8 +55,12 @@ enum IOSRootCertificateInstaller {
         guard SHA256.hash(data: certificate).map({ String(format: "%02x", $0) }).joined() == expectedSHA256 else {
             throw InstallError.wrongCertificate
         }
-        guard builder.contains(trustStorePath) else {
-            throw HFSPlusError.missingPath(trustStorePath)
+        // iOS 6 restore images contain the built-in Security.framework store,
+        // but the per-user store under /private/var/Keychains is created only
+        // after first boot/profile installation. Use the user store when it
+        // exists; otherwise seed the system store so fresh guest images boot.
+        guard let path = supportedTrustStorePaths.first(where: builder.contains) else {
+            throw InstallError.invalidTrustStore("neither the user nor system TrustStore.sqlite3 exists in the guest image")
         }
 
         let temporary = FileManager.default.temporaryDirectory
@@ -64,10 +70,10 @@ enum IOSRootCertificateInstaller {
                 try? FileManager.default.removeItem(atPath: temporary.path + suffix)
             }
         }
-        try Data(try builder.contents(of: trustStorePath)).write(to: temporary)
+        try Data(try builder.contents(of: path)).write(to: temporary)
         let changed = try install(certificateDER: certificate, databaseAt: temporary)
         guard changed else { return false }
-        try builder.replaceContents(of: trustStorePath, with: [UInt8](try Data(contentsOf: temporary)))
+        try builder.replaceContents(of: path, with: [UInt8](try Data(contentsOf: temporary)))
         return true
     }
 
