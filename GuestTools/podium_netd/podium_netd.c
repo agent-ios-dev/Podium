@@ -128,7 +128,7 @@ static void probe(void) {
             if(!strcmp(text,apps[app])) { found=1; logline(app ? "Cydia foreground" : "Safari foreground"); break; }
         }
         if(!found) logline(app ? "Cydia launch failed" : "Safari launch failed");
-        sleep(8);
+        sleep(app ? 15 : 20);
     }
     _exit(0);
 }

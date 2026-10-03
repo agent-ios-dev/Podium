@@ -52,7 +52,7 @@ final class RealDiskBootTests: XCTestCase {
         var lockScreenAppeared = false
         var captured = Set<String>()
         var firstSeen = [String:Int]()
-        for second in 0..<180 {
+        for second in 0..<300 {
             Thread.sleep(forTimeInterval: 1)
             let text = session.newKernelMessages()
             messages += text
@@ -60,7 +60,7 @@ final class RealDiskBootTests: XCTestCase {
             let snapshot = session.snapshot()
             for (event,name) in [("Safari foreground","safari"),("Cydia foreground","cydia")] {
                 if session.guestNetwork.messages.contains(event), firstSeen[name]==nil { firstSeen[name]=second }
-                if let appeared=firstSeen[name], second-appeared>=4, !captured.contains(name) {
+                if let appeared=firstSeen[name], second-appeared>=30, !captured.contains(name) {
                     captured.insert(name)
                     let display=session.display, width=display.pixelWidth, height=display.pixelHeight
                     var pixels=Data(count:width*height*4)

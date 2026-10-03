@@ -72,6 +72,10 @@ final class PacketNetwork: NetworkInterface {
         let body=Data(p[(h+th)..<size])
         if !body.isEmpty {
             if seq==f.expected {
+                if ProcessInfo.processInfo.environment["PODIUM_NETWORK_TEST"]=="1", f.destinationPort==80,
+                   let request=String(data:body,encoding:.utf8), request.hasPrefix("GET ") {
+                    print("GUESTTCP: outgoing HTTP request to \(f.destination) \(request.components(separatedBy:"\r\n").first ?? "")")
+                }
                 f.expected &+= UInt32(body.count)
                 f.connection.send(content:body,completion:.contentProcessed { error in if error != nil { self.tcp(f,flags:0x14,remember:false) } })
             }
@@ -88,7 +92,12 @@ final class PacketNetwork: NetworkInterface {
         f.reading=true
         f.connection.receive(minimumIncompleteLength:1,maximumLength:32768) { data,_,done,error in
             f.reading=false
-            if let data { f.buffered.append(data) }; f.ended=done || error != nil; self.flush(f)
+            if let data {
+                if ProcessInfo.processInfo.environment["PODIUM_NETWORK_TEST"]=="1", f.destinationPort==80 {
+                    print("GUESTTCP: incoming \(data.count) bytes; status \(String(decoding:data.prefix(40),as:UTF8.self).components(separatedBy:"\r\n").first ?? "")")
+                }
+                f.buffered.append(data)
+            }; f.ended=done || error != nil; self.flush(f)
             if !f.ended { self.receive(f) }
         }
     }
