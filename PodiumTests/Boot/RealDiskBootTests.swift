@@ -45,7 +45,8 @@ final class RealDiskBootTests: XCTestCase {
         }
         setenv("PODIUM_NETWORK_TEST", "1", 1)
         defer { unsetenv("PODIUM_DISK_TRACE"); unsetenv("PODIUM_NETWORK_TEST") }
-        let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true)
+        let audio = GuestAudioCapture()
+        let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true, audioOutput: audio)
         session.platform.i2s0.traceAccess = { print("AUDIOTRACE: \($0)") }
         session.platform.cdma.log = { line in
             if line.contains("peripheral") || line.contains("started") { print("AUDIOTRACE: \(line)") }
@@ -85,7 +86,7 @@ final class RealDiskBootTests: XCTestCase {
                 lockScreenAppeared = true
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") { break }
+                if events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") && audio.nonzeroSamples > 20_000 { break }
             }
         }
         // The small kernel ring can overwrite early mount messages before
@@ -97,5 +98,41 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
         XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
+        session.stop()
+        XCTAssertGreaterThan(audio.nonzeroSamples, 20_000, "Real guest audio playback must deliver non-silent PCM through I2S/DMA")
+        print("AUDIOTRACE: captured \(audio.nonzeroSamples) nonzero samples at \(audio.sampleRate) Hz")
+        let attachment = XCTAttachment(data: audio.wave(), uniformTypeIdentifier: "com.microsoft.waveform-audio")
+        attachment.name = "guest-audio"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+}
+
+private final class GuestAudioCapture: AudioOutput {
+    var volume: Float = 1
+    private let lock = NSLock()
+    private var samples: [Float] = []
+    private var rate: Double = 44_100
+    var sampleRate: Double { lock.lock(); defer { lock.unlock() }; return rate }
+    var nonzeroSamples: Int { lock.lock(); defer { lock.unlock() }; return samples.filter { abs($0) > 0.00001 }.count }
+    func configure(sampleRate: Double) { lock.lock(); rate = sampleRate; lock.unlock() }
+    func pause() {}
+    func resume() {}
+    func enqueue(samples chunk: [Float]) {
+        lock.lock(); defer { lock.unlock() }
+        guard samples.count < 96_000 * 2 * 6 else { return }
+        if samples.isEmpty, !chunk.contains(where: { abs($0) > 0.00001 }) { return }
+        samples.append(contentsOf: chunk.prefix(96_000 * 2 * 6 - samples.count))
+    }
+    func wave() -> Data {
+        lock.lock(); defer { lock.unlock() }
+        var result = Data()
+        func word(_ value: UInt32) { var little = value.littleEndian; withUnsafeBytes(of: &little) { result.append(contentsOf: $0) } }
+        let bytes = UInt32(samples.count * 2)
+        word(0x46464952); word(36 + bytes); word(0x45564157); word(0x20746D66); word(16)
+        word(0x00020001); word(UInt32(rate)); word(UInt32(rate) * 4); word(0x00100004); word(0x61746164); word(bytes)
+        for sample in samples {
+            var value = Int16(max(-32768, min(32767, Int(sample * 32767)))).littleEndian
+            withUnsafeBytes(of: &value) { result.append(contentsOf: $0) }
+        }
+        return result
     }
 }
