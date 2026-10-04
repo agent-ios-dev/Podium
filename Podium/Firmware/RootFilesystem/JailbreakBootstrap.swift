@@ -13,6 +13,8 @@ enum JailbreakBootstrap {
 
     static let substrateLaunchCommand =
         "bsexec .. /usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"
+    static let substrateSpringBoardLibrary = "/Library/MobileSubstrate/MobileSubstrate.dylib"
+    static let springBoardLaunchDaemonPath = "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
 
     /// The signature follows every bundled payload byte, so a new bootstrap
     /// automatically upgrades the persistent guest volume on its next start.
@@ -28,7 +30,7 @@ enum JailbreakBootstrap {
         hasher.update(data: toolData)
         hasher.update(data: certificateBundleData)
         hasher.update(data: bootstrapData)
-        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;tlsroot-signed-ios5-root-bundle-v1;substrate-launchd-hook-v1".utf8))
+        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;tlsroot-signed-ios5-root-bundle-v1;substrate-springboard-dyld-v1".utf8))
         return "6:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
@@ -105,6 +107,29 @@ enum JailbreakBootstrap {
             }
         }
 
+        // Inject into SpringBoard itself. Running cynject against launchd
+        // from launchd.conf caused iOS 6 to restart during early boot.
+        if builder.contains(springBoardLaunchDaemonPath) {
+            try builder.editPropertyList(springBoardLaunchDaemonPath) { job in
+                let variables = (job["EnvironmentVariables"] as? NSMutableDictionary) ?? NSMutableDictionary()
+                let current = variables["DYLD_INSERT_LIBRARIES"] as? String ?? ""
+                var libraries = current.split(separator: ":").map(String.init)
+                if !libraries.contains(substrateSpringBoardLibrary) {
+                    libraries.append(substrateSpringBoardLibrary)
+                }
+                variables["DYLD_INSERT_LIBRARIES"] = libraries.joined(separator: ":")
+                job["EnvironmentVariables"] = variables
+            }
+        }
+
+        // Remove the old launchd injection command from upgraded guest disks,
+        // while preserving any unrelated launchd.conf settings.
+        if builder.contains("/private/etc/launchd.conf") {
+            let existing = String(decoding: try builder.contents(of: "/private/etc/launchd.conf"), as: UTF8.self)
+            try builder.replaceContents(of: "/private/etc/launchd.conf",
+                                        with: Array(Self.mergingLaunchdConfig(existing, "").utf8))
+        }
+
         try builder.addFile("/.cydia_no_stash", contents: [], template: "/private/etc/fstab")
         if let tool = Bundle.main.url(forResource: "podium_netd", withExtension: "bin") {
             try builder.addFile("/usr/libexec/podium_netd", contents: [UInt8](try Data(contentsOf: tool)),
@@ -148,10 +173,12 @@ enum JailbreakBootstrap {
 
     private static func mergingLaunchdConfig(_ existing: String, _ incoming: String) -> String {
         var lines = existing.split(whereSeparator: \.isNewline).map(String.init)
+            .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines) != substrateLaunchCommand }
         var seen = Set(lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
         for line in incoming.split(whereSeparator: \.isNewline).map(String.init) {
             let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
+            guard !normalized.isEmpty, normalized != substrateLaunchCommand,
+                  seen.insert(normalized).inserted else { continue }
             lines.append(line)
         }
         return lines.joined(separator: "\n") + "\n"

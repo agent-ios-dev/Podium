@@ -13,7 +13,7 @@ on:
           - baseline
           - launchd
           - dyld_environment
-        default: baseline
+        default: dyld_environment
 permissions:
   contents: read
 jobs:
@@ -41,6 +41,7 @@ jobs:
           xcodegen generate
           export PODIUM_SUBSTRATE_PROBE_PATH="$PWD/GuestTools/substrate_probe/build/PodiumInjectionProbe.bin"
           export PODIUM_TEST_SUBSTRATE_MODE='${{ inputs.substrate_mode }}'
+          export PODIUM_TEST_BOOT_ONLY=1
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -only-testing:PodiumTests/GuestDiskShimExecutionTests -only-testing:PodiumTests/FileBackedStorageTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
       - name: Export guest display evidence
         if: always()

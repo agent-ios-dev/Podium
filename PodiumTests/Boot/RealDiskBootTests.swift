@@ -100,15 +100,12 @@ final class RealDiskBootTests: XCTestCase {
                               contents: Array((preservedLaunchdSetting + "\n").utf8),
                               template: "/private/etc/fstab")
 
-        // Model a volume created by the previous release: Substrate's files
-        // and dpkg records are already present, but that release deliberately
-        // removed the launchd hook. A signature mismatch must reapply the
-        // bootstrap without losing user data or existing launchd settings.
+        // Model a volume created by the old release: it has the risky launchd
+        // hook and no SpringBoard DYLD setting. Migration must replace the hook
+        // without losing user data or unrelated launchd settings.
         try JailbreakBootstrap.apply(to: installed)
-        let priorReleaseConfig = String(decoding: try installed.contents(of: launchdConfigPath), as: UTF8.self)
-            .replacingOccurrences(of: JailbreakBootstrap.substrateLaunchCommand + "\n", with: "")
-        XCTAssertFalse(priorReleaseConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
-                       "The migration fixture must start without Substrate's launchd hook")
+        try Self.applySubstrateDyldEnvironment(to: installed, enabled: false)
+        let priorReleaseConfig = preservedLaunchdSetting + "\n" + JailbreakBootstrap.substrateLaunchCommand + "\n"
         try installed.replaceContents(of: launchdConfigPath, with: Array(priorReleaseConfig.utf8))
         try installed.replaceContents(of: JailbreakBootstrap.markerPath,
                                       with: Array("5:previous-release-without-substrate-hook".utf8))
@@ -138,25 +135,27 @@ final class RealDiskBootTests: XCTestCase {
         }
         let upgradedLaunchdConfig = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
         XCTAssertTrue(upgradedLaunchdConfig.contains(preservedLaunchdSetting), "Substrate setup must preserve existing launchd settings")
-        let substrateMode = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_MODE"] ?? "baseline"
+        XCTAssertFalse(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
+                       "The old cynject hook must be removed during migration")
+        var springBoardFormat = PropertyListSerialization.PropertyListFormat.binary
+        let springBoardData = Data(try upgraded.contents(of: JailbreakBootstrap.springBoardLaunchDaemonPath))
+        let springBoardJob = try XCTUnwrap(PropertyListSerialization.propertyList(from: springBoardData,
+            options: .mutableContainersAndLeaves, format: &springBoardFormat) as? [String: Any])
+        let springBoardVariables = try XCTUnwrap(springBoardJob["EnvironmentVariables"] as? [String: Any])
+        let springBoardLibraries = (springBoardVariables["DYLD_INSERT_LIBRARIES"] as? String ?? "")
+            .split(separator: ":").map(String.init)
+        XCTAssertTrue(springBoardLibraries.contains(JailbreakBootstrap.substrateSpringBoardLibrary),
+                      "The migrated guest must load Substrate into SpringBoard")
+        let substrateMode = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_MODE"] ?? "dyld_environment"
         let testSubstrateInjection = substrateMode == "launchd" || substrateMode == "dyld_environment"
         XCTAssertTrue(["baseline", "launchd", "dyld_environment"].contains(substrateMode),
                       "Unknown Substrate boot mode: \(substrateMode)")
-        if substrateMode == "launchd" {
-            XCTAssertTrue(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
-                          "The iOS 6 Substrate launcher must be scheduled by launchd.conf")
-        } else {
-            // The baseline separates a firmware/emulator boot regression from
-            // Substrate startup. dyld_environment tests Substrate's documented
-            // fallback, which inserts its Bootstrap dylib into SpringBoard via
-            // DYLD_INSERT_LIBRARIES instead of injecting launchd with cynject.
-            let baselineConfig = upgradedLaunchdConfig
-                .replacingOccurrences(of: JailbreakBootstrap.substrateLaunchCommand + "\n", with: "")
-            XCTAssertNotEqual(baselineConfig, upgradedLaunchdConfig,
-                              "The selected non-launchd mode must remove the Substrate launcher")
-            try upgraded.replaceContents(of: launchdConfigPath, with: Array(baselineConfig.utf8))
-            if substrateMode == "dyld_environment" {
-                try Self.applySubstrateDyldEnvironment(to: upgraded)
+        if substrateMode == "baseline" || substrateMode == "launchd" {
+            try Self.applySubstrateDyldEnvironment(to: upgraded, enabled: false)
+            if substrateMode == "launchd" {
+                let current = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
+                try upgraded.replaceContents(of: launchdConfigPath,
+                    with: Array((current + JailbreakBootstrap.substrateLaunchCommand + "\n").utf8))
             }
             try Self.writeGuestImage(upgraded, replacing: image)
         }
@@ -193,6 +192,7 @@ final class RealDiskBootTests: XCTestCase {
         defer { session.stop() }
         var messages = ""
         var lockScreenAppeared = false
+        let bootOnly = ProcessInfo.processInfo.environment["PODIUM_TEST_BOOT_ONLY"] == "1"
         var captured = Set<String>()
         var firstSeen = [String:Int]()
         for second in 0..<300 {
@@ -240,6 +240,7 @@ final class RealDiskBootTests: XCTestCase {
             }
             if EmulatorCore.lockScreenIsUp(session.display) {
                 lockScreenAppeared = true
+                if bootOnly { break }
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
                 if events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") && audio.nonzeroSamples > 20_000 { break }
@@ -248,12 +249,6 @@ final class RealDiskBootTests: XCTestCase {
         // The small kernel ring can overwrite early mount messages before
         // the first poll. The disk header and running userland verify boot.
         XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
-        XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")
-        XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
-        XCTAssertTrue(session.guestNetwork.messages.contains("CFNetwork fetched Example Domain"), "Safari's network library must fetch the actual page: \(session.guestNetwork.messages)")
-        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
-        XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
-        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
         session.stop()
         if testSubstrateInjection {
             let booted = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
@@ -263,6 +258,13 @@ final class RealDiskBootTests: XCTestCase {
             XCTAssertEqual(String(decoding: try booted.contents(of: probeMarker), as: UTF8.self),
                            "SpringBoard tweak constructor ran\n")
         }
+        if bootOnly { return }
+        XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")
+        XCTAssertTrue(session.guestNetwork.messages.contains("HTTP test received a real internet response"), "Guest sockets and DNS must reach a real HTTP server: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("CFNetwork fetched Example Domain"), "Safari's network library must fetch the actual page: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia uicache completed"), "Cydia must finish its startup and app registration: \(session.guestNetwork.messages)")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
+        XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
         XCTAssertGreaterThan(audio.nonzeroSamples, 20_000, "Real guest audio playback must deliver non-silent PCM through I2S/DMA")
         print("AUDIOTRACE: captured \(audio.nonzeroSamples) nonzero samples at \(audio.sampleRate) Hz")
         let attachment = XCTAttachment(data: audio.wave(), uniformTypeIdentifier: "com.microsoft.waveform-audio")
@@ -286,18 +288,30 @@ final class RealDiskBootTests: XCTestCase {
         try writeGuestImage(builder, replacing: image)
     }
 
-    private static func applySubstrateDyldEnvironment(to builder: RootFilesystemBuilder) throws {
-        let launchDaemonPath = "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
+    private static func applySubstrateDyldEnvironment(to builder: RootFilesystemBuilder, enabled: Bool) throws {
+        let launchDaemonPath = JailbreakBootstrap.springBoardLaunchDaemonPath
         XCTAssertTrue(builder.contains(launchDaemonPath), "iOS 6 must have SpringBoard's launchd job plist")
         try builder.editPropertyList(launchDaemonPath) { job in
             let variables = (job["EnvironmentVariables"] as? NSMutableDictionary) ?? NSMutableDictionary()
             let current = variables["DYLD_INSERT_LIBRARIES"] as? String ?? ""
-            let libraries = current.split(separator: ":").map(String.init)
-            let substrateLibrary = "/Library/MobileSubstrate/MobileSubstrate.dylib"
-            if !libraries.contains(substrateLibrary) {
-                variables["DYLD_INSERT_LIBRARIES"] = current.isEmpty ? substrateLibrary : current + ":" + substrateLibrary
+            var libraries = current.split(separator: ":").map(String.init)
+            if enabled {
+                if !libraries.contains(JailbreakBootstrap.substrateSpringBoardLibrary) {
+                    libraries.append(JailbreakBootstrap.substrateSpringBoardLibrary)
+                }
+            } else {
+                libraries.removeAll { $0 == JailbreakBootstrap.substrateSpringBoardLibrary }
             }
-            job["EnvironmentVariables"] = variables
+            if libraries.isEmpty {
+                variables.removeObject(forKey: "DYLD_INSERT_LIBRARIES")
+            } else {
+                variables["DYLD_INSERT_LIBRARIES"] = libraries.joined(separator: ":")
+            }
+            if variables.count == 0 {
+                job.removeObject(forKey: "EnvironmentVariables")
+            } else {
+                job["EnvironmentVariables"] = variables
+            }
         }
     }
 

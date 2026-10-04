@@ -231,22 +231,25 @@ existing_records = [
 ]
 payload_files[status_name] = ("\n\n".join(existing_records + installed_records) + "\n").encode()
 
-# MobileSubstrate's iOS 6 install hook injects its launcher into launchd so
-# launchd-launched processes receive SubstrateLoader. Keep the stock command
-# from the matching ARMv7 package; the integration boot test verifies a real
-# SpringBoard tweak constructor runs.
+# Older bootstrap archives and guest volumes may contain this launchd hook.
+# Strip only that command; Podium injects Substrate into SpringBoard through
+# DYLD_INSERT_LIBRARIES, which the real-kernel integration test exercises.
 substrate_launcher = (
     "bsexec .. /usr/bin/cynject 1 "
-    "/Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib\n"
-).encode()
-add_file("/private/etc/launchd.conf", substrate_launcher, 0o644, "mobilesubstrate")
+    "/Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"
+)
+launchd_name = archive_path("/private/etc/launchd.conf")
+if launchd_name in payload_files:
+    filtered = [line for line in payload_files[launchd_name].decode("utf-8").splitlines()
+                if line.strip() != substrate_launcher]
+    payload_files[launchd_name] = ("\n".join(filtered) + ("\n" if filtered else "")).encode()
 
 origin = (
     f"{BOOTSTRAP_URL}\nSHA256 {BOOTSTRAP_SHA256}\n"
     "Cydia: https://git.saurik.com/cydia.git\n"
     "Tweak packages (package: version; source; SHA-256):\n"
     + "\n".join(installed_packages)
-    + "\nMobileSubstrate is activated through its iOS 6 launchd.conf/cynject hook. The Podium integration boot test checks that a SpringBoard-filtered probe dylib runs.\n"
+    + "\nMobileSubstrate is loaded into SpringBoard through DYLD_INSERT_LIBRARIES. The Podium integration boot test checks that a SpringBoard-filtered probe dylib runs.\n"
     "No package maintainer binaries are executed by the build host or guest.\n"
     "Package authors: Jay Freeman (Cydia Substrate/Safe Mode); Sam Bingner (PreferenceLoader).\n"
 )
