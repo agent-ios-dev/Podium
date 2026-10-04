@@ -19,16 +19,16 @@ enum JailbreakBootstrap {
     static var signature: String? {
         guard let toolURL = Bundle.main.url(forResource: "podium_netd", withExtension: "bin"),
               let toolData = try? Data(contentsOf: toolURL),
-              let certificateURL = Bundle.main.url(forResource: "ISRGRootX1", withExtension: "cer"),
-              let certificateData = try? Data(contentsOf: certificateURL),
+              let certificateBundleURL = IOSRootCertificateInstaller.bundledArchiveURL,
+              let certificateBundleData = try? Data(contentsOf: certificateBundleURL),
               let bootstrapURL = Bundle.main.url(forResource: "cydia-bootstrap", withExtension: "zip"),
               let bootstrapData = try? Data(contentsOf: bootstrapURL) else { return nil }
 
         var hasher = SHA256()
         hasher.update(data: toolData)
-        hasher.update(data: certificateData)
+        hasher.update(data: certificateBundleData)
         hasher.update(data: bootstrapData)
-        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;substrate-packages-no-launchd-injection-v1".utf8))
+        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;tlsroot-signed-ios5-root-bundle-v1;substrate-packages-no-launchd-injection-v1".utf8))
         return "5:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 

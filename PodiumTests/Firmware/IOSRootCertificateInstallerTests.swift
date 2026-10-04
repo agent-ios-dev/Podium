@@ -3,6 +3,42 @@ import SQLite3
 @testable import Podium
 
 final class IOSRootCertificateInstallerTests: XCTestCase {
+    func testInstallsEveryPinnedTLSRootAndIsIdempotent() throws {
+        let bundle = Bundle(for: TestBundleToken.self)
+        let archiveURL = try XCTUnwrap(bundle.url(forResource: "tlsroot-root-certificates", withExtension: "zip"))
+        let archive = try ZipArchiveReader(fileURL: archiveURL)
+        let manifestEntry = try XCTUnwrap(archive.entry(named: "manifest.json"))
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: archive.data(for: manifestEntry)) as? [String: Any])
+        let certificates = try XCTUnwrap(manifest["certificates"] as? [[String: String]])
+        XCTAssertEqual(certificates.count, IOSRootCertificateInstaller.expectedCertificateCount)
+
+        let database = FileManager.default.temporaryDirectory.appendingPathComponent("PodiumTLSRoots-\(UUID().uuidString).sqlite3")
+        defer { try? FileManager.default.removeItem(at: database) }
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(database.path, &connection), SQLITE_OK)
+        let db = try XCTUnwrap(connection)
+        XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE tsettings(sha1 BLOB NOT NULL DEFAULT '', subj BLOB NOT NULL DEFAULT '', tset BLOB, data BLOB, PRIMARY KEY(sha1));", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(db), SQLITE_OK)
+
+        for item in certificates {
+            let path = try XCTUnwrap(item["path"])
+            let expectedSHA256 = try XCTUnwrap(item["sha256"])
+            let entry = try XCTUnwrap(archive.entry(named: path))
+            XCTAssertTrue(try IOSRootCertificateInstaller.install(certificateDER: archive.data(for: entry),
+                                                                   expectedSHA256: expectedSHA256, databaseAt: database))
+        }
+        XCTAssertEqual(try integer("SELECT COUNT(*) FROM tsettings", in: database), certificates.count)
+
+        for item in certificates {
+            let path = try XCTUnwrap(item["path"])
+            let expectedSHA256 = try XCTUnwrap(item["sha256"])
+            let entry = try XCTUnwrap(archive.entry(named: path))
+            XCTAssertFalse(try IOSRootCertificateInstaller.install(certificateDER: archive.data(for: entry),
+                                                                    expectedSHA256: expectedSHA256, databaseAt: database))
+        }
+        XCTAssertEqual(try integer("SELECT COUNT(*) FROM tsettings", in: database), certificates.count)
+    }
+
     func testAddsCertificateToFreshIOS6TrustStoreSchema() throws {
         let certificateURL = try XCTUnwrap(Bundle(for: TestBundleToken.self).url(forResource: "ISRGRootX1", withExtension: "cer"))
         let certificate = try Data(contentsOf: certificateURL)

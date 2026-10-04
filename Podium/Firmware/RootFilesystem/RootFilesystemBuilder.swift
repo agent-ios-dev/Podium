@@ -414,12 +414,16 @@ final class RootFilesystemBuilder {
 /// applies on a Mac.
 enum RootFilesystemRecipe {
     /// Bumped whenever the edits change, so prepared images are rebuilt.
-    static let version = 21
+    static let version = 23
     /// Room left for the guest to write into (logs, caches, preferences).
     static let freeSpace: UInt64 = 64 << 20
 
+    static func markerVersion(skipInitialSetup: Bool) -> String {
+        "\(version)-setup-\(skipInitialSetup ? "skipped" : "manual")"
+    }
+
     static func apply(to builder: RootFilesystemBuilder, keybagBootstrap: [UInt8], syncDaemon: [UInt8]? = nil, firstBootState: Data? = nil,
-                      bootReadFiles: [String] = []) throws {
+                      skipInitialSetup: Bool = true, bootReadFiles: [String] = []) throws {
         try JailbreakBootstrap.apply(to: builder)
         // The volume is rebuilt with a fresh 8 MB journal (the kernel sets
         // it up on first mount): the app keeps the guest's writes, and a
@@ -497,20 +501,22 @@ enum RootFilesystemRecipe {
         // (kCFPreferencesCurrentHost, which CoreFoundation files under
         // ByHost — PSSetupAssistantNeedsToRun) and for any host
         // (CFPreferencesGetAppBooleanValue), so both files are written.
-        let preferences = "/private/var/mobile/Library/Preferences/"
-        let template = preferences + ".GlobalPreferences.plist"
-        try builder.addFile(preferences + "com.apple.backboardd.plist",
-                            contents: try binaryPlist(["BKDataMigratorLastSystemVersion": "10B500"]), template: template)
-        let setupDone = try binaryPlist(["SetupDone": true, "SetupFinishedAllSteps": true, "SetupVersion": 3])
-        try builder.addFile(preferences + "com.apple.purplebuddy.plist", contents: setupDone, template: template)
-        try builder.addFolder(preferences + "ByHost", owner: 501, group: 501, mode: 0o755)
-        try builder.addFile(preferences + "ByHost/com.apple.purplebuddy.plist", contents: setupDone, template: template)
-        try builder.addFile(preferences + "com.apple.keyboard.plist",
-                            contents: try binaryPlist(["BuddySetupDone": true]), template: template)
+        if skipInitialSetup {
+            let preferences = "/private/var/mobile/Library/Preferences/"
+            let template = preferences + ".GlobalPreferences.plist"
+            try builder.addFile(preferences + "com.apple.backboardd.plist",
+                                contents: try binaryPlist(["BKDataMigratorLastSystemVersion": "10B500"]), template: template)
+            let setupDone = try binaryPlist(["SetupDone": true, "SetupFinishedAllSteps": true, "SetupVersion": 3])
+            try builder.addFile(preferences + "com.apple.purplebuddy.plist", contents: setupDone, template: template)
+            try builder.addFolder(preferences + "ByHost", owner: 501, group: 501, mode: 0o755)
+            try builder.addFile(preferences + "ByHost/com.apple.purplebuddy.plist", contents: setupDone, template: template)
+            try builder.addFile(preferences + "com.apple.keyboard.plist",
+                                contents: try binaryPlist(["BuddySetupDone": true]), template: template)
+        }
 
         try applyHactivation(to: builder)
 
-        if let firstBootState { try applyFirstBootState(firstBootState, to: builder) }
+        if skipInitialSetup, let firstBootState { try applyFirstBootState(firstBootState, to: builder) }
         // Apply after captured first-boot files, which may include global
         // preferences, so the first guest session starts in Russian.
         try IOSLanguageInstaller.apply(to: builder)

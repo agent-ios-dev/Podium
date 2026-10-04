@@ -61,6 +61,8 @@ final class EmulatorCore {
     /// asks for can power it straight back on.
     private var poweredOnWith: (firmware: ImportedFirmware, fileURL: URL)?
     private var rateSamples: [(time: Date, retired: UInt64)] = []
+    private var preparationStartedAt: Date?
+    private(set) var preparationSecondsRemaining: Double?
 
     init(
         audioOutput: AudioOutput = DeviceAudioOutput(),
@@ -93,15 +95,22 @@ final class EmulatorCore {
         poweredOnWith = (firmware, fileURL)
         status = .booting
         bootStage = .loadingKernel
+        preparationStartedAt = nil
+        preparationSecondsRemaining = nil
         appendLog("Powering on \(firmware.displayName) (iOS \(firmware.metadata.productVersion)).")
 
         do {
             if !RootFilesystemPreparer.isPrepared(forFirmwareAt: fileURL) {
                 appendLog("Preparing the root filesystem from the IPSW (first launch only)…")
                 bootStage = .preparingFilesystem(.extracting, fraction: 0)
+                preparationStartedAt = Date()
+                preparationSecondsRemaining = nil
                 let keybagBootstrap = try Self.bundledKeybagBootstrap()
                 let syncDaemon = Bundle.main.url(forResource: "podium_syncd", withExtension: "bin").flatMap { try? Data(contentsOf: $0) }.map { [UInt8]($0) }
-                let firstBootState = Bundle.main.url(forResource: "first_boot_state", withExtension: "plist").flatMap { try? Data(contentsOf: $0) }
+                let skipInitialSetup = UserDefaults.standard.object(forKey: AppStorageKeys.skipInitialSetup) as? Bool ?? true
+                let firstBootState = skipInitialSetup
+                    ? Bundle.main.url(forResource: "first_boot_state", withExtension: "plist").flatMap { try? Data(contentsOf: $0) }
+                    : nil
                 let bootReadFiles = Bundle.main.url(forResource: "boot_read_files", withExtension: "txt")
                     .flatMap { try? String(contentsOf: $0, encoding: .utf8) }.map(RootFilesystemRecipe.fileList) ?? []
                 let started = Date()
@@ -112,12 +121,20 @@ final class EmulatorCore {
                         Task { @MainActor [weak self] in
                             guard let self, case .preparingFilesystem = self.bootStage else { return }
                             self.bootStage = .preparingFilesystem(progress.phase, fraction: progress.fraction)
+                            let overall = progress.phase == .extracting
+                                ? progress.fraction * 0.4
+                                : 0.4 + progress.fraction * 0.6
+                            if overall > 0.02, let startedAt = self.preparationStartedAt {
+                                let elapsed = Date().timeIntervalSince(startedAt)
+                                self.preparationSecondsRemaining = max(elapsed * (1 - overall) / overall, 0)
+                            }
                         }
                     }
                 }.value
                 appendLog(String(format: "Root filesystem ready in %.1f s.", Date().timeIntervalSince(started)))
             }
             bootStage = .loadingKernel
+            preparationSecondsRemaining = nil
             // An APFS clone can fail on a device, falling back to a sparse
             // copy of the eight-GiB logical image. Never do that I/O on the
             // main actor: UIKit's watchdog can terminate the app at Kernel.
@@ -297,6 +314,7 @@ final class EmulatorCore {
     private func fail(_ message: String, detail: String) {
         status = .error(message)
         bootStage = nil
+        preparationSecondsRemaining = nil
         appendLog("Power-on failed: \(detail)")
     }
 

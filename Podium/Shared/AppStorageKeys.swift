@@ -13,4 +13,5 @@ enum AppStorageKeys {
     static let confirmBeforeDeletingFirmware = "podium.confirmBeforeDeletingFirmware"
     static let showDeveloperSettings = "podium.showDeveloperSettings"
     static let showFrameRate = "podium.showFrameRate"
+    static let skipInitialSetup = "podium.skipInitialSetup"
 }

@@ -2,15 +2,16 @@ import Foundation
 import CryptoKit
 import SQLite3
 
-/// Adds the public ISRG Root X1 CA to iOS 6's additional-root TrustStore.
-/// This is the same TrustStore record format used by the iOS 5–6 importer in
-/// ADVTrustStore; the existing database is retained and only the matching
-/// certificate subject is inserted or updated.
+/// Adds the TLSRoot.litten.ca iOS 5+ root bundle to iOS 6's additional-root
+/// TrustStore. Only pinned self-issued root CAs are included; the profile's
+/// Apple WWDR code-signing intermediates are not promoted to trust anchors.
 enum IOSRootCertificateInstaller {
     static let trustStorePath = "/private/var/Keychains/TrustStore.sqlite3"
     static let supportedTrustStorePaths = [trustStorePath]
-    static let certificateResource = "ISRGRootX1.cer"
-    private static let expectedSHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
+    static let certificateArchiveResource = "tlsroot-root-certificates.zip"
+    static let expectedCertificateCount = 32
+    private static let expectedArchiveSHA256 = "411ebd84cccea419e3a8d872abb9175c2cae9d346cc18da6b5fb213baa705ed1"
+    private static let isrgRootX1SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
     private static let trustSettings = Data("""
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -19,10 +20,18 @@ enum IOSRootCertificateInstaller {
     </plist>
     """.utf8)
 
-    private static var bundledCertificateURL: URL? {
+    private struct BundleManifest: Decodable {
+        struct Certificate: Decodable {
+            let path: String
+            let sha256: String
+        }
+        let certificates: [Certificate]
+    }
+
+    static var bundledArchiveURL: URL? {
         ([Bundle.main] + Bundle.allBundles + Bundle.allFrameworks)
-            .first { $0.url(forResource: "ISRGRootX1", withExtension: "cer") != nil }?
-            .url(forResource: "ISRGRootX1", withExtension: "cer")
+            .first { $0.url(forResource: "tlsroot-root-certificates", withExtension: "zip") != nil }?
+            .url(forResource: "tlsroot-root-certificates", withExtension: "zip")
     }
 
     enum InstallError: Error, CustomStringConvertible {
@@ -34,9 +43,9 @@ enum IOSRootCertificateInstaller {
 
         var description: String {
             switch self {
-            case .missingCertificate: return "The bundled ISRG Root X1 certificate is missing."
-            case .wrongCertificate: return "The bundled ISRG Root X1 certificate failed its SHA-256 check."
-            case .invalidCertificate: return "The bundled ISRG Root X1 certificate has invalid DER data."
+            case .missingCertificate: return "The bundled TLS root certificate archive is missing."
+            case .wrongCertificate: return "A bundled TLS root certificate failed its SHA-256 check."
+            case .invalidCertificate: return "The bundled TLS root manifest or a certificate is invalid."
             case .invalidTrustStore(let detail): return "The guest TrustStore database is invalid: \(detail)"
             case .sqlite(let detail): return "Couldn't update the guest TrustStore database: \(detail)"
             }
@@ -47,12 +56,29 @@ enum IOSRootCertificateInstaller {
     /// edited in a temporary file before its bytes replace the HFS+ file.
     @discardableResult
     static func apply(to builder: RootFilesystemBuilder) throws -> Bool {
-        guard let certificateURL = bundledCertificateURL else {
+        guard let archiveURL = bundledArchiveURL else {
             throw InstallError.missingCertificate
         }
-        let certificate = try Data(contentsOf: certificateURL)
-        guard SHA256.hash(data: certificate).map({ String(format: "%02x", $0) }).joined() == expectedSHA256 else {
+        let archiveData = try Data(contentsOf: archiveURL)
+        guard SHA256.hash(data: archiveData).map({ String(format: "%02x", $0) }).joined() == expectedArchiveSHA256 else {
             throw InstallError.wrongCertificate
+        }
+        let archive = try ZipArchiveReader(fileURL: archiveURL)
+        guard let manifestEntry = archive.entry(named: "manifest.json"),
+              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: archive.data(for: manifestEntry)),
+              manifest.certificates.count == expectedCertificateCount else {
+            throw InstallError.invalidCertificate
+        }
+        var paths = Set<String>()
+        for certificate in manifest.certificates {
+            guard certificate.path.hasPrefix("certs/"),
+                  !certificate.path.split(separator: "/").contains(".."),
+                  paths.insert(certificate.path).inserted,
+                  certificate.sha256.count == 64,
+                  certificate.sha256.allSatisfy({ $0.isHexDigit }),
+                  archive.entry(named: certificate.path) != nil else {
+                throw InstallError.invalidCertificate
+            }
         }
         // A clean iOS 6.1.6 restore image has /private/var/Keychains but no
         // TrustStore.sqlite3 yet. Seed the documented iOS 5–6 user store with
@@ -75,7 +101,14 @@ enum IOSRootCertificateInstaller {
         } else {
             try createEmptyIOS6TrustStore(at: temporary)
         }
-        let changed = try install(certificateDER: certificate, databaseAt: temporary)
+        var changed = false
+        for item in manifest.certificates {
+            guard let entry = archive.entry(named: item.path) else {
+                throw InstallError.invalidCertificate
+            }
+            changed = try install(certificateDER: archive.data(for: entry), expectedSHA256: item.sha256,
+                                  databaseAt: temporary) || changed
+        }
         guard changed || !storeExists else { return false }
         let contents = [UInt8](try Data(contentsOf: temporary))
         if storeExists {
@@ -107,7 +140,13 @@ enum IOSRootCertificateInstaller {
     /// is already present and current.
     @discardableResult
     static func install(certificateDER: Data, databaseAt url: URL) throws -> Bool {
-        guard SHA256.hash(data: certificateDER).map({ String(format: "%02x", $0) }).joined() == expectedSHA256 else {
+        try install(certificateDER: certificateDER, expectedSHA256: isrgRootX1SHA256, databaseAt: url)
+    }
+
+    /// Testable database operation for any pinned CA in the signed bundle.
+    @discardableResult
+    static func install(certificateDER: Data, expectedSHA256: String, databaseAt url: URL) throws -> Bool {
+        guard SHA256.hash(data: certificateDER).map({ String(format: "%02x", $0) }).joined() == expectedSHA256.lowercased() else {
             throw InstallError.wrongCertificate
         }
         let subject = try normalizedSubject(in: [UInt8](certificateDER))
@@ -134,7 +173,8 @@ enum IOSRootCertificateInstaller {
 
         let digestData = hash == "sha256" ? digestSHA256 : digestSHA1
         let subjectHex = subject.hex
-        let query = "SELECT \(hash), tset, data FROM tsettings WHERE subj=X'\(subjectHex)' LIMIT 1"
+        let digestHex = digestData.hex
+        let query = "SELECT tset, data, subj FROM tsettings WHERE \(hash)=X'\(digestHex)' LIMIT 1"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK, let statement else {
             throw InstallError.sqlite(String(cString: sqlite3_errmsg(db)))
@@ -142,19 +182,18 @@ enum IOSRootCertificateInstaller {
         let step = sqlite3_step(statement)
         guard step == SQLITE_ROW || step == SQLITE_DONE else { throw InstallError.sqlite(String(cString: sqlite3_errmsg(db))) }
         let exists = step == SQLITE_ROW
-        let alreadyCurrent = exists && columnData(statement, 0) == digestData &&
-            columnData(statement, 1) == trustSettings && columnData(statement, 2) == certificateDER
+        let alreadyCurrent = exists && columnData(statement, 0) == trustSettings &&
+            columnData(statement, 1) == certificateDER && columnData(statement, 2) == Data(subject)
         sqlite3_finalize(statement)
         if alreadyCurrent { return false }
 
-        let digest = digestData.hex
         let settingsHex = trustSettings.hex
         let certificateHex = certificateDER.hex
         let sql: String
         if exists {
-            sql = "UPDATE tsettings SET \(hash)=X'\(digest)', tset=X'\(settingsHex)', data=X'\(certificateHex)' WHERE subj=X'\(subjectHex)'"
+            sql = "UPDATE tsettings SET subj=X'\(subjectHex)', tset=X'\(settingsHex)', data=X'\(certificateHex)' WHERE \(hash)=X'\(digestHex)'"
         } else {
-            sql = "INSERT INTO tsettings (\(hash), subj, tset, data) VALUES (X'\(digest)', X'\(subjectHex)', X'\(settingsHex)', X'\(certificateHex)')"
+            sql = "INSERT INTO tsettings (\(hash), subj, tset, data) VALUES (X'\(digestHex)', X'\(subjectHex)', X'\(settingsHex)', X'\(certificateHex)')"
         }
         guard sqlite3_exec(db, "BEGIN IMMEDIATE; \(sql); COMMIT;", nil, nil, nil) == SQLITE_OK else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)

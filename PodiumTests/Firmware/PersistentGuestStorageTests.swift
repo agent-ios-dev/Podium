@@ -123,6 +123,31 @@ final class PersistentGuestStorageTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(storage.snapshot()).freeBytes, 3 * 512)
     }
 
+    func testEraseRemovesPreparedAndGuestImagesForTheNextSetupChoice() throws {
+        let key = AppStorageKeys.skipInitialSetup
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        UserDefaults.standard.set(false, forKey: key)
+
+        let firmwareURL = temporaryDirectory.appendingPathComponent("manual-setup.ipsw")
+        let systemImage = RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL)
+        try writeHFSImage(at: systemImage, fill: 0x31, freeBlocks: 3)
+        let storage = PersistentGuestStorage(appSupportURL: applicationSupportURL)
+        let userImage = try storage.prepareUserVolume(forFirmwareAt: firmwareURL).url
+        let imageMode = try String(contentsOf: userImage.appendingPathExtension("version"), encoding: .utf8)
+        XCTAssertEqual(imageMode, RootFilesystemRecipe.markerVersion(skipInitialSetup: false))
+        XCTAssertNotEqual(imageMode, RootFilesystemRecipe.markerVersion(skipInitialSetup: true))
+
+        try storage.eraseActiveVolume(for: firmwareURL, emulatorIsBusy: false)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: userImage.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: systemImage.path))
+        XCTAssertNil(try storage.snapshot())
+    }
+
     func testPreservesExistingDurableImageWhileMigratingLegacyData() throws {
         let firmwareURL = temporaryDirectory.appendingPathComponent("existing-image.ipsw")
         try writeHFSImage(at: RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL), fill: 0x31, freeBlocks: 3)

@@ -15,15 +15,23 @@ struct EmulatorScreen: View {
         firmwareLibrary.activeFirmware
     }
 
-    /// The live display once iOS has reached its lock screen; until then
-    /// the boot screen, with its progress bar.
+    /// Show the actual guest framebuffer as soon as iOS starts drawing, so
+    /// its native iBoot logo stays inside the virtual device display.
     @ViewBuilder
     private var screen: some View {
-        if emulatorCore.bootStage == .running, let source = emulatorCore.framebufferSource {
+        if let source = emulatorCore.framebufferSource, guestDisplayIsLive {
             GuestFramebufferView(source: source, resolutionDivisor: displayResolutionDivisor,
                                  customWidth: customDisplayWidth, customHeight: customDisplayHeight)
         } else {
-            BootProgressView(stage: emulatorCore.bootStage, instructionsPerSecond: emulatorCore.instructionsPerSecond)
+            BootProgressView(stage: emulatorCore.bootStage)
+        }
+    }
+
+    private var guestDisplayIsLive: Bool {
+        guard let stage = emulatorCore.bootStage else { return false }
+        switch stage {
+        case .booting, .running: return true
+        default: return false
         }
     }
 
@@ -142,6 +150,13 @@ struct EmulatorScreen: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
+            if let progressDescription {
+                Text(progressDescription)
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
             if case .error(let message) = emulatorCore.status {
                 Text(message)
                     .font(.footnote)
@@ -173,6 +188,23 @@ struct EmulatorScreen: View {
         }
         .frame(maxWidth: 340)
         .frame(maxWidth: .infinity)
+    }
+
+    private var progressDescription: String? {
+        guard let stage = emulatorCore.bootStage else { return nil }
+        switch stage {
+        case .preparingFilesystem(let phase, let fraction):
+            let operation = phase == .extracting ? "Preparing iOS files" : "Building the 8 GiB system image"
+            let estimate = emulatorCore.preparationSecondsRemaining.map { " · about \(BootProgressView.format($0)) left" } ?? ""
+            return "\(operation) · \(Int(fraction * 100))%\(estimate)"
+        case .loadingKernel:
+            return "Loading iOS…"
+        case .booting(_, let remaining):
+            guard let remaining else { return "Starting iOS…" }
+            return "Starting iOS · about \(BootProgressView.format(remaining)) left"
+        case .running:
+            return nil
+        }
     }
 
     private func powerOn(_ firmware: ImportedFirmware) {

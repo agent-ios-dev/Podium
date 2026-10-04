@@ -86,8 +86,9 @@ enum RootFilesystemPreparer {
                 throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: source.path])
             }
             try copyHFSImage(from: source, to: temporary, fileManager: fileManager)
+            let currentMarker = RootFilesystemRecipe.markerVersion(skipInitialSetup: currentSkipInitialSetup)
             let sourceVersion = source == prepared
-                ? String(RootFilesystemRecipe.version)
+                ? currentMarker
                 : try? String(contentsOf: markerURL(for: source), encoding: .utf8)
             try safelyPromote(temporary, to: user, markerVersion: sourceVersion, fileManager: fileManager)
 
@@ -97,7 +98,7 @@ enum RootFilesystemPreparer {
             }
         }
         let version = (try? String(contentsOf: markerURL(for: user), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (user, version != String(RootFilesystemRecipe.version))
+        return (user, version != RootFilesystemRecipe.markerVersion(skipInitialSetup: currentSkipInitialSetup))
     }
 
     private static func markerURL(for imageURL: URL) -> URL {
@@ -416,11 +417,29 @@ enum RootFilesystemPreparer {
     private static func isPrepared(_ image: URL, fileManager: FileManager) -> Bool {
         guard fileManager.fileExists(atPath: image.path),
               let marker = try? String(contentsOf: markerURL(for: image), encoding: .utf8) else { return false }
-        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == String(RootFilesystemRecipe.version)
+        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == RootFilesystemRecipe.markerVersion(skipInitialSetup: currentSkipInitialSetup)
     }
 
     static func isPrepared(forFirmwareAt ipswURL: URL) -> Bool {
         isPrepared(imageURL(forFirmwareAt: ipswURL), fileManager: .default)
+    }
+
+    static var currentSkipInitialSetup: Bool {
+        UserDefaults.standard.object(forKey: AppStorageKeys.skipInitialSetup) as? Bool ?? true
+    }
+
+    /// The prepared image is reproducible from the retained IPSW, so an erase
+    /// can rebuild it with the current Setup Assistant preference next time.
+    static func removePreparedImage(forFirmwareAt ipswURL: URL) throws {
+        let image = imageURL(forFirmwareAt: ipswURL)
+        let decrypted = ipswURL.deletingPathExtension().appendingPathExtension("rootfs-decrypted.dmg")
+        for url in [image, markerURL(for: image), image.appendingPathExtension("ready"),
+                    markerURL(for: image.appendingPathExtension("ready")), image.appendingPathExtension("partial"),
+                    decrypted, decrypted.appendingPathExtension("partial")] {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     /// Returns the prepared system image, building it first if needed.
@@ -428,6 +447,7 @@ enum RootFilesystemPreparer {
     static func prepare(firmwareAt ipswURL: URL, keybagBootstrap: [UInt8], syncDaemon: [UInt8]? = nil, firstBootState: Data? = nil,
                         bootReadFiles: [String] = [],
                         progress: (Progress) -> Void = { _ in }) throws -> URL {
+        let skipInitialSetup = currentSkipInitialSetup
         let fileManager = FileManager.default
         let image = imageURL(forFirmwareAt: ipswURL)
         try recoverInterruptedReplacement(at: image, fileManager: fileManager)
@@ -439,7 +459,7 @@ enum RootFilesystemPreparer {
         let readyMarker = markerURL(for: readyImage)
         if fileManager.fileExists(atPath: readyImage.path),
            let readyVersion = try? String(contentsOf: readyMarker, encoding: .utf8),
-           readyVersion.trimmingCharacters(in: .whitespacesAndNewlines) == String(RootFilesystemRecipe.version) {
+           readyVersion.trimmingCharacters(in: .whitespacesAndNewlines) == RootFilesystemRecipe.markerVersion(skipInitialSetup: skipInitialSetup) {
             try safelyPromote(readyImage, to: image, markerVersion: readyVersion, fileManager: fileManager)
             return image
         }
@@ -454,11 +474,13 @@ enum RootFilesystemPreparer {
 
         if keepDecrypted, fileManager.fileExists(atPath: decrypted.path) {
             return try build(from: decrypted, to: image, partial: partial, keybagBootstrap: keybagBootstrap,
-                             syncDaemon: syncDaemon, firstBootState: firstBootState, bootReadFiles: bootReadFiles, progress: progress)
+                             syncDaemon: syncDaemon, firstBootState: firstBootState, skipInitialSetup: skipInitialSetup,
+                             bootReadFiles: bootReadFiles, progress: progress)
         }
         try decryptRootFilesystem(fromFirmwareAt: ipswURL, to: decrypted) { progress(Progress(phase: .extracting, fraction: $0)) }
         return try build(from: decrypted, to: image, partial: partial, keybagBootstrap: keybagBootstrap,
-                         syncDaemon: syncDaemon, firstBootState: firstBootState, bootReadFiles: bootReadFiles, progress: progress)
+                         syncDaemon: syncDaemon, firstBootState: firstBootState, skipInitialSetup: skipInitialSetup,
+                         bootReadFiles: bootReadFiles, progress: progress)
     }
 
     /// Streams the root filesystem DMG out of the IPSW, decrypting it into
@@ -495,12 +517,13 @@ enum RootFilesystemPreparer {
     }
 
     private static func build(from decrypted: URL, to image: URL, partial: URL, keybagBootstrap: [UInt8], syncDaemon: [UInt8]?,
-                              firstBootState: Data?, bootReadFiles: [String], progress: (Progress) -> Void) throws -> URL {
+                              firstBootState: Data?, skipInitialSetup: Bool, bootReadFiles: [String], progress: (Progress) -> Void) throws -> URL {
         let fileManager = FileManager.default
         progress(Progress(phase: .building, fraction: 0))
         let volume = try HFSPlusVolume(source: try UDIFDiskImage(url: decrypted))
         let builder = try RootFilesystemBuilder(volume: volume)
         try RootFilesystemRecipe.apply(to: builder, keybagBootstrap: keybagBootstrap, syncDaemon: syncDaemon, firstBootState: firstBootState,
+                                       skipInitialSetup: skipInitialSetup,
                                        bootReadFiles: bootReadFiles)
         try builder.write(to: partial, freeSpace: RootFilesystemRecipe.freeSpace, maximumVolumeBytes: FileBackedStorage.capacity) { written in
             progress(Progress(phase: .building, fraction: Double(written.bytesWritten) / Double(max(written.totalBytes, 1))))
@@ -510,7 +533,7 @@ enum RootFilesystemPreparer {
         try? fileManager.removeItem(at: ready)
         try? fileManager.removeItem(at: markerURL(for: ready))
         try fileManager.moveItem(at: partial, to: ready)
-        let version = String(RootFilesystemRecipe.version)
+        let version = RootFilesystemRecipe.markerVersion(skipInitialSetup: skipInitialSetup)
         try version.write(to: markerURL(for: ready), atomically: true, encoding: .utf8)
         try safelyPromote(ready, to: image, markerVersion: version, fileManager: fileManager)
         return image

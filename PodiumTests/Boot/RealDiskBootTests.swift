@@ -54,6 +54,21 @@ final class RealDiskBootTests: XCTestCase {
         let preferences = try XCTUnwrap(PropertyListSerialization.propertyList(from: preferencesData, format: nil) as? [String: Any])
         XCTAssertEqual(preferences["AppleLanguages"] as? [String], ["ru", "en"])
         XCTAssertEqual(preferences["AppleLocale"] as? String, "ru_RU")
+
+        let keybagURL = try XCTUnwrap(Bundle.main.url(forResource: "keybag_bootstrap", withExtension: "bin"))
+        let capturedStateURL = try XCTUnwrap(Bundle.main.url(forResource: "first_boot_state", withExtension: "plist"))
+        let keybagBootstrap = [UInt8](try Data(contentsOf: keybagURL))
+        let capturedState = try Data(contentsOf: capturedStateURL)
+        let setupBuilder = try RootFilesystemBuilder(volume: HFSPlusVolume(source: UDIFDiskImage(url: decrypted)))
+        try RootFilesystemRecipe.apply(to: setupBuilder, keybagBootstrap: keybagBootstrap,
+                                       firstBootState: capturedState, skipInitialSetup: false)
+        for path in [
+            "/private/var/mobile/Library/Preferences/com.apple.purplebuddy.plist",
+            "/private/var/mobile/Library/Preferences/ByHost/com.apple.purplebuddy.plist",
+            "/private/var/mobile/Library/Preferences/com.apple.keyboard.plist",
+        ] {
+            XCTAssertFalse(setupBuilder.contains(path), "Manual Setup Assistant mode must not mark setup as finished: \(path)")
+        }
     }
 
     func testReferenceFirmwareBootWithFileBackedDisk() throws {

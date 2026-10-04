@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "15"
+    CURRENT_PROJECT_VERSION: "16"
     TARGETED_DEVICE_FAMILY: "1,2"
     SUPPORTS_MACCATALYST: "NO"
     ENABLE_PREVIEWS: "YES"
@@ -25,6 +25,7 @@ targets:
       - path: Podium
     resources:
       - path: Podium/Resources/ISRGRootX1.cer
+      - path: Podium/Resources/GuestTools/tlsroot-root-certificates.zip
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.leviidev.podium
@@ -63,6 +64,7 @@ targets:
           - Boot/_ManualRealFirmwareVerification.swift
     resources:
       - path: PodiumTests/Resources/ISRGRootX1.cer
+      - path: Podium/Resources/GuestTools/tlsroot-root-certificates.zip
     dependencies:
       - target: Podium
     settings:

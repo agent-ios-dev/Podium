@@ -8,6 +8,7 @@ xcuserdata/
 .swiftpm/
 .build/
 *.ipa
+__pycache__/
 
 # Imported firmware never belongs in git (large binaries, user data)
 *.ipsw

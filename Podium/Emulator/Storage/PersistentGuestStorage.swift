@@ -88,7 +88,18 @@ final class PersistentGuestStorage {
     func eraseActiveVolume(for firmwareURL: URL?, emulatorIsBusy: Bool) throws {
         guard !emulatorIsBusy else { throw StorageError.deviceMustBePoweredOff }
         guard let firmwareURL else { throw StorageError.noFirmwareForErase }
-        _ = try erase(forFirmwareAt: firmwareURL, emulatorIsPoweredOn: false)
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        let images = [
+            RootFilesystemPreparer.userImageURL(in: try directoryURL()),
+            RootFilesystemPreparer.userImageURL(forFirmwareAt: firmwareURL),
+        ]
+        for image in images {
+            for url in [image, image.appendingPathExtension("version")] where fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
+            }
+        }
+        try RootFilesystemPreparer.removePreparedImage(forFirmwareAt: firmwareURL)
     }
 
     func removeFirmware(at firmwareURL: URL, emulatorIsBusy: Bool, removeImportedFile: () throws -> Void) throws {

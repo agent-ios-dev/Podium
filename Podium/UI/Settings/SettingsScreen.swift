@@ -33,6 +33,7 @@ struct SettingsScreen: View {
     @AppStorage(AppStorageKeys.customDisplayHeight) private var customDisplayHeight = 960
     @AppStorage(AppStorageKeys.confirmBeforeDeletingFirmware) private var confirmBeforeDeleting = true
     @AppStorage(AppStorageKeys.showDeveloperSettings) private var showDeveloperSettings = false
+    @AppStorage(AppStorageKeys.skipInitialSetup) private var skipInitialSetup = true
 
     private func refreshGuestStorage() {
         do {
@@ -119,6 +120,9 @@ struct SettingsScreen: View {
                 for: firmwareLibrary.fileURL(for: firmware),
                 emulatorIsBusy: emulatorCore.isBusy
             )
+            guestFileStatus = skipInitialSetup
+                ? "Virtual iPod data was erased. The next launch rebuilds iOS and skips Setup Assistant."
+                : "Virtual iPod data was erased. The next launch rebuilds iOS with Setup Assistant enabled."
             refreshGuestStorage()
         } catch {
             storageError = error.localizedDescription
@@ -230,6 +234,18 @@ struct SettingsScreen: View {
                             Text("Классический чёрный корпус с кнопкой Home вокруг экрана iPod.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+
+                        cardDivider
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Toggle("Skip iOS Setup Assistant", isOn: $skipInitialSetup)
+                            Text(skipInitialSetup
+                                 ? "Starts at the iOS home screen. Turn this off and erase Virtual iPod data to click through setup after the next launch."
+                                 : "After you erase Virtual iPod data, the next launch rebuilds the guest system and opens the iOS setup screens.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         cardDivider
