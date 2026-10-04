@@ -38,6 +38,17 @@ final class EmulatorCore {
     var isBusy: Bool { session != nil || bootStage != nil }
     var storageFlushFailure: String? { session?.storageFlushFailureDescription }
     var hasStorageFlushFailure: Bool { session?.hasStorageFlushFailure ?? false }
+    /// The complete current-run log. The on-screen list is bounded, while
+    /// this file retains every entry for export after a failed boot.
+    var completeLogText: String {
+        if let url = Self.logFileURL,
+           let contents = try? String(contentsOf: url, encoding: .utf8),
+           !contents.isEmpty {
+            return contents
+        }
+        return log.map { "\(Self.timestampFormatter.string(from: $0.date))  \($0.message)" }
+            .joined(separator: "\n")
+    }
 
     let audioOutput: AudioOutput
     let inputController: InputController
@@ -54,9 +65,11 @@ final class EmulatorCore {
     /// Per root filesystem recipe: a new recipe can change how much work
     /// boot does.
     private static let measuredBootInstructionsKey = "EmulatorCore.measuredBootInstructions.\(RootFilesystemRecipe.version)"
-    private static let logCapacity = 200
+    private static let logCapacity = 1_000
 
     private var pollTask: Task<Void, Never>?
+    /// Invalidates any kernel-log callbacks still queued from a previous run.
+    private var logGeneration = 0
     /// What the running machine was powered on with, so a restart iOS
     /// asks for can power it straight back on.
     private var poweredOnWith: (firmware: ImportedFirmware, fileURL: URL)?
@@ -86,7 +99,12 @@ final class EmulatorCore {
     /// `bootStage`.
     func powerOn(firmware: ImportedFirmware, storedAt fileURL: URL) async {
         guard session == nil, bootStage == nil else { return }
+        logGeneration &+= 1
+        log.removeAll()
         Self.resetLogFile()
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let appBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+        appendLog("Diagnostics started: Podium \(appVersion) (\(appBuild)); host \(ProcessInfo.processInfo.operatingSystemVersionString).")
         await boot(firmware: firmware, storedAt: fileURL)
     }
 
@@ -160,6 +178,13 @@ final class EmulatorCore {
                 Task { @MainActor in
                     guard let self, let session, self.session === session else { return }
                     self.sessionFinished(state, from: session)
+                }
+            }
+            let currentLogGeneration = logGeneration
+            session.onKernelMessages = { [weak self] messages in
+                Task { @MainActor in
+                    guard let self, self.logGeneration == currentLogGeneration else { return }
+                    self.appendKernelMessages(messages)
                 }
             }
             self.session = session
@@ -271,8 +296,6 @@ final class EmulatorCore {
         if case .running = bootStage { hadFinishedBoot = true } else { hadFinishedBoot = false }
         pollTask?.cancel()
         pollTask = nil
-        let finalMessages = finishedSession.newKernelMessages()
-        if !finalMessages.isEmpty { appendLog(finalMessages) }
         bootStage = nil
         if finishedSession.hasStorageFlushFailure {
             status = .error("Guest stopped, but persistent storage couldn't be flushed. Retry Power Off before leaving.")
@@ -328,13 +351,31 @@ final class EmulatorCore {
     // MARK: Log
 
     private func appendLog(_ message: String) {
-        let entry = EmulatorLogEntry(date: Date(), message: message)
-        log.append(entry)
+        appendLogEntries([message])
+    }
+
+    private func appendKernelMessages(_ messages: String) {
+        let lines = messages
+            .split(whereSeparator: { $0.isNewline })
+            .map { "Kernel: \($0)" }
+        guard !lines.isEmpty else { return }
+        appendLogEntries(lines)
+    }
+
+    private func appendLogEntries(_ messages: [String]) {
+        let entries = messages.map { EmulatorLogEntry(date: Date(), message: $0) }
+        log.append(contentsOf: entries)
         if log.count > Self.logCapacity {
             log.removeFirst(log.count - Self.logCapacity)
         }
-        Self.persistLogLine("\(entry.formattedTime) \(message)")
+        Self.persistLogLines(entries.map { "\(Self.timestampFormatter.string(from: $0.date))  \($0.message)" })
     }
+
+    private static let timestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// Every log entry, additionally mirrored to a file in the app's
     /// Documents directory, so a device run's log survives the app quitting
@@ -350,8 +391,9 @@ final class EmulatorCore {
         try? "".write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private static func persistLogLine(_ line: String) {
-        guard let url = logFileURL, let data = (line + "\n").data(using: .utf8) else { return }
+    private static func persistLogLines(_ lines: [String]) {
+        guard !lines.isEmpty, let url = logFileURL,
+              let data = (lines.joined(separator: "\n") + "\n").data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: url) {
             defer { try? handle.close() }
             handle.seekToEndOfFile()

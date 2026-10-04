@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Secondary, hidden-by-default screen (Section 13 of the project spec).
 /// Everything here is either a real static fact, the CPU's actual live
@@ -8,6 +9,9 @@ import SwiftUI
 /// else in the app depends only on the `CPU` protocol.
 struct DeveloperSettingsScreen: View {
     @Environment(EmulatorCore.self) private var emulatorCore
+    @State private var isExportingLogs = false
+    @State private var logDocument = PodiumLogDocument(text: "")
+    @State private var logExportError: String?
 
     private var armCPU: ARMv7CPU? {
         emulatorCore.cpu as? ARMv7CPU
@@ -65,6 +69,14 @@ struct DeveloperSettingsScreen: View {
             }
 
             Section("Emulator Log") {
+                Button {
+                    logDocument = PodiumLogDocument(text: emulatorCore.completeLogText)
+                    isExportingLogs = true
+                } label: {
+                    Label("Save full log to Files", systemImage: "square.and.arrow.down")
+                }
+                .disabled(emulatorCore.log.isEmpty)
+
                 if emulatorCore.log.isEmpty {
                     Text("No activity yet.")
                         .foregroundStyle(.secondary)
@@ -84,6 +96,24 @@ struct DeveloperSettingsScreen: View {
         }
         .navigationTitle("Developer")
         .navigationBarTitleDisplayMode(.inline)
+        .fileExporter(
+            isPresented: $isExportingLogs,
+            document: logDocument,
+            contentType: .plainText,
+            defaultFilename: "podium-diagnostics"
+        ) { result in
+            if case .failure(let error) = result {
+                logExportError = error.localizedDescription
+            }
+        }
+        .alert("Couldn't save diagnostics", isPresented: Binding(
+            get: { logExportError != nil },
+            set: { if !$0 { logExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { logExportError = nil }
+        } message: {
+            Text(logExportError ?? "")
+        }
     }
 
     private func hex(_ value: UInt32) -> String {
@@ -117,6 +147,28 @@ struct DeveloperSettingsScreen: View {
         case .unimplementedHardwareFeature(let description, let address):
             return "\(description), at \(hex(address))"
         }
+    }
+}
+
+private struct PodiumLogDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.plainText] }
+
+    let text: String
+
+    init(text: String) {
+        self.text = text
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents,
+              let text = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.text = text
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(text.utf8))
     }
 }
 

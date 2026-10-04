@@ -71,7 +71,9 @@ final class EmulationSession {
     /// Where the RAM disk sits in guest RAM (offsets from its base).
     private var ramDiskRange: Range<Int> = 0..<0
     private var messageBufferOffset: Int?
+    private var messageBufferScanAttempted = false
     private var messagesRead = 0
+    private let messageBufferLock = NSLock()
 
     private let lock = NSLock()
     private var pendingInput: [(event: InputEvent, sent: Date)] = []
@@ -94,6 +96,9 @@ final class EmulationSession {
     private var guestReset = false
     /// Called on the emulation thread once the run ends, for any reason.
     var onFinish: ((State) -> Void)?
+    /// Called on the emulation thread whenever the guest kernel writes new
+    /// console output. Consumers should move the text to their own actor.
+    var onKernelMessages: ((String) -> Void)?
 
     /// `persistent`: the guest's writes to its root filesystem go to the
     /// image file, and last; otherwise every boot starts from the image.
@@ -409,6 +414,15 @@ final class EmulationSession {
             let limit = paceLimit()
             cpu.idleSkipLimit = limit
             let ran = cpu.run(maxUnits: 1_000_000)
+            // Locating the kernel message ring requires a one-time scan of
+            // guest RAM. The reader waits until the kernel has initialized,
+            // so this diagnostic scan doesn't stall the first boot steps.
+            if onKernelMessages != nil,
+               cpu.retiredInstructionCount >= 100_000_000,
+               messageBufferOffset != nil || !messageBufferScanAttempted {
+                let kernelMessages = newKernelMessages()
+                if !kernelMessages.isEmpty { onKernelMessages?(kernelMessages) }
+            }
             if guestReset {
                 finalState = .shutDown
                 break
@@ -445,6 +459,10 @@ final class EmulationSession {
             virtualTime = cpu.virtualTime
             lock.unlock()
         }
+        if onKernelMessages != nil {
+            let finalKernelMessages = newKernelMessages(forceScan: true)
+            if !finalKernelMessages.isEmpty { onKernelMessages?(finalKernelMessages) }
+        }
         let stateBeforeFlush = finalState
         retired = cpu.retiredInstructionCount
         virtualTime = cpu.virtualTime
@@ -469,8 +487,10 @@ final class EmulationSession {
 
     /// Kernel messages logged since the last call, read straight from the
     /// kernel's message buffer (`msgbuf`, found by its magic) in guest RAM.
-    /// Safe from any thread; call from one at a time.
-    func newKernelMessages() -> String {
+    /// Safe from multiple threads; reads are serialized to protect the ring cursor.
+    func newKernelMessages(forceScan: Bool = false) -> String {
+        messageBufferLock.lock()
+        defer { messageBufferLock.unlock() }
         guard let region = ram.fastPathRegion(for: GuestMemoryLayout.ramPhysicalBase) else { return "" }
         let raw = UnsafeRawBufferPointer(start: region.pointer, count: region.regionLength)
         func word(_ offset: Int) -> UInt32 { raw.loadUnaligned(fromByteOffset: offset, as: UInt32.self) }
@@ -482,7 +502,10 @@ final class EmulationSession {
             guard start >= 0, start + size <= raw.count else { return nil }
             return (start, size, next)
         }
-        if messageBufferOffset == nil {
+        if messageBufferOffset == nil,
+           !messageBufferScanAttempted || forceScan,
+           forceScan || cpu.retiredInstructionCount >= 100_000_000 {
+            messageBufferScanAttempted = true
             var offset = 0
             while offset + 20 <= raw.count {
                 if ramDiskRange.contains(offset) { offset = ramDiskRange.upperBound; continue }
