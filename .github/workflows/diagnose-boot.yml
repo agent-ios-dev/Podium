@@ -29,6 +29,7 @@ jobs:
       - name: Execute actual guest kernel on Apple Silicon
         run: |
           zsh GuestTools/podium_netd/build.sh
+          zsh GuestTools/substrate_probe/build.sh
           xcodegen generate
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -only-testing:PodiumTests/GuestDiskShimExecutionTests -only-testing:PodiumTests/FileBackedStorageTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
       - name: Export guest display evidence

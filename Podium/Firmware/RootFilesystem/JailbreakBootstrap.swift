@@ -11,7 +11,7 @@ enum JailbreakBootstrap {
         "mobilesubstrate", "com.saurik.substrate.safemode", "preferenceloader",
     ]
 
-    private static let unsupportedSubstrateLaunchCommand =
+    static let substrateLaunchCommand =
         "bsexec .. /usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"
 
     /// The signature follows every bundled payload byte, so a new bootstrap
@@ -28,8 +28,8 @@ enum JailbreakBootstrap {
         hasher.update(data: toolData)
         hasher.update(data: certificateBundleData)
         hasher.update(data: bootstrapData)
-        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;tlsroot-signed-ios5-root-bundle-v1;substrate-packages-no-launchd-injection-v1".utf8))
-        return "5:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        hasher.update(data: Data("ios6-truststore-seed-v1;ios6-russian-locale-v1;tlsroot-signed-ios5-root-bundle-v1;substrate-launchd-hook-v1".utf8))
+        return "6:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     static func apply(to builder: RootFilesystemBuilder) throws {
@@ -78,6 +78,13 @@ enum JailbreakBootstrap {
                     try builder.replaceContents(of: resolved, with: Array(Self.mergingPackageStatus(existing, incoming).utf8))
                     continue
                 }
+                if resolved == "/private/etc/launchd.conf",
+                   let entry = archive.entry(named: String(path.dropFirst())) {
+                    let existing = String(decoding: try builder.contents(of: resolved), as: UTF8.self)
+                    let incoming = String(decoding: try archive.data(for: entry), as: UTF8.self)
+                    try builder.replaceContents(of: resolved, with: Array(Self.mergingLaunchdConfig(existing, incoming).utf8))
+                    continue
+                }
                 guard replaceManagedPayload else { continue }
                 try builder.remove(resolved)
             }
@@ -95,18 +102,6 @@ enum JailbreakBootstrap {
                 }
                 try builder.addFile(resolved, contents: [UInt8](try archive.data(for: entry)),
                                     template: "/usr/libexec/keybagd", mode: mode)
-            }
-        }
-
-        // Older test builds added this hook to launchd.conf. The guest kernel
-        // reports cynject's external modification as a no-op, so don't leave
-        // that failed injection command behind on an upgraded virtual iPod.
-        if builder.contains("/private/etc/launchd.conf") {
-            let config = String(decoding: try builder.contents(of: "/private/etc/launchd.conf"), as: UTF8.self)
-            let lines = config.split(whereSeparator: \.isNewline).map(String.init)
-            let safeLines = lines.filter { $0.trimmingCharacters(in: .whitespacesAndNewlines) != Self.unsupportedSubstrateLaunchCommand }
-            if safeLines.count != lines.count {
-                try builder.replaceContents(of: "/private/etc/launchd.conf", with: Array(safeLines.joined(separator: "\n").utf8))
             }
         }
 
@@ -149,6 +144,17 @@ enum JailbreakBootstrap {
             return installedNames.insert(name).inserted
         }
         return (preserved + additions).joined(separator: "\n\n") + "\n"
+    }
+
+    private static func mergingLaunchdConfig(_ existing: String, _ incoming: String) -> String {
+        var lines = existing.split(whereSeparator: \.isNewline).map(String.init)
+        var seen = Set(lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        for line in incoming.split(whereSeparator: \.isNewline).map(String.init) {
+            let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
 }

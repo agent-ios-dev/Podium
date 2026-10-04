@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 command -v xcodebuild >/dev/null || { echo "Install Xcode on a Mac first." >&2; exit 1; }
 command -v xcodegen >/dev/null || { echo "Install XcodeGen (brew install xcodegen)." >&2; exit 1; }
 zsh GuestTools/podium_netd/build.sh
+zsh GuestTools/substrate_probe/build.sh
 xcodegen generate
 xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release \
     -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build-8gib \

@@ -95,9 +95,9 @@ final class RealDiskBootTests: XCTestCase {
         try installed.addFile(sentinel,contents:Array("preserve guest data".utf8),template:"/private/etc/fstab")
         let launchdConfigPath = "/private/etc/launchd.conf"
         if installed.contains(launchdConfigPath) { try installed.remove(launchdConfigPath) }
-        let staleSubstrateHook = "bsexec .. /usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"
+        let preservedLaunchdSetting = "setenv PODIUM_PRESERVED_LAUNCHD_SETTING 1"
         try installed.addFile(launchdConfigPath,
-                              contents: Array((staleSubstrateHook + "\n").utf8),
+                              contents: Array((preservedLaunchdSetting + "\n").utf8),
                               template: "/private/etc/fstab")
         try installed.remove(JailbreakBootstrap.markerPath)
         try installed.write(to:image.appendingPathExtension("upgrade-test"),freeSpace:8<<20,maximumVolumeBytes:FileBackedStorage.capacity)
@@ -125,7 +125,14 @@ final class RealDiskBootTests: XCTestCase {
                           "dpkg must have the file list for \(package)")
         }
         let upgradedLaunchdConfig = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
-        XCTAssertFalse(upgradedLaunchdConfig.contains(staleSubstrateHook), "Upgrade must remove the unsupported Substrate boot hook")
+        XCTAssertTrue(upgradedLaunchdConfig.contains(preservedLaunchdSetting), "Substrate setup must preserve existing launchd settings")
+        XCTAssertTrue(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
+                      "The iOS 6 Substrate launcher must be scheduled by launchd.conf")
+
+        let probeURL = Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "dylib")
+        if let probeURL { try Self.installSubstrateProbe(probeURL, into: image) }
+        else { print("SUBSTRATE PROBE: test dylib wasn't built; launchd hook boot is still exercised") }
+
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
         if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {
@@ -205,10 +212,39 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
         session.stop()
+        if probeURL != nil {
+            let booted = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
+            let probeMarker = "/private/var/mobile/Library/Preferences/PodiumSubstrateInjectionProbe"
+            XCTAssertTrue(booted.contains(probeMarker),
+                          "Substrate must load a SpringBoard-filtered tweak and run its constructor")
+            XCTAssertEqual(String(decoding: try booted.contents(of: probeMarker), as: UTF8.self),
+                           "SpringBoard tweak constructor ran\n")
+        }
         XCTAssertGreaterThan(audio.nonzeroSamples, 20_000, "Real guest audio playback must deliver non-silent PCM through I2S/DMA")
         print("AUDIOTRACE: captured \(audio.nonzeroSamples) nonzero samples at \(audio.sampleRate) Hz")
         let attachment = XCTAttachment(data: audio.wave(), uniformTypeIdentifier: "com.microsoft.waveform-audio")
         attachment.name = "guest-audio"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    private static func installSubstrateProbe(_ probeURL: URL, into image: URL) throws {
+        let builder = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
+        let dylibPath = "/Library/MobileSubstrate/DynamicLibraries/PodiumInjectionProbe.dylib"
+        let filterPath = "/Library/MobileSubstrate/DynamicLibraries/PodiumInjectionProbe.plist"
+        let filter = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>Filter</key><dict><key>Bundles</key><array><string>com.apple.springboard</string></array></dict></dict></plist>
+        """
+        let probeSize = (try FileManager.default.attributesOfItem(atPath: probeURL.path)[.size] as? NSNumber)?.uint64Value ?? 0
+        try builder.addFile(dylibPath, from: probeURL, length: probeSize, owner: 0, group: 0,
+                            mode: 0o755, template: "/usr/libexec/keybagd")
+        try builder.addFile(filterPath, contents: Array(filter.utf8), owner: 0, group: 0,
+                            mode: 0o644, template: "/private/etc/fstab")
+        let staging = image.appendingPathExtension("substrate-probe")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try builder.write(to: staging, freeSpace: 8 << 20, maximumVolumeBytes: FileBackedStorage.capacity)
+        try FileManager.default.removeItem(at: image)
+        try FileManager.default.moveItem(at: staging, to: image)
     }
 }
 

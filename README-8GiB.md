@@ -1,6 +1,6 @@
 # Podium 0.1.0 — фиксированный диск 8 ГиБ
 
-Эта сборка включает интернет, Cydia, автоматическую установку пакетов Substrate-твиков, TLS-корни из TLSRoot.litten.ca, бэкап виртуального iPod и настройку пропуска iOS Setup Assistant. Подробности сети и ограничение на запуск Substrate — в [инструкции сети и Cydia](README-network-cydia.md). Актуальная версия рецепта гостевой системы — 23.
+Эта сборка включает интернет, Cydia, автоматическую установку пакетов Substrate-твиков, TLS-корни из TLSRoot.litten.ca, бэкап виртуального iPod и настройку пропуска iOS Setup Assistant. Подробности сети и проверку инжекта Substrate — в [инструкции сети и Cydia](README-network-cydia.md). Актуальная версия рецепта гостевой системы — 24.
 
 Основа: тег [Leviidev/Podium 0.1.0](https://github.com/Leviidev/Podium/releases/tag/0.1.0), commit `904ffe70378a210cc7d57b2b651677c57617f1b7`.
 
