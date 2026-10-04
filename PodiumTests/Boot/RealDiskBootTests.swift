@@ -89,6 +89,23 @@ final class RealDiskBootTests: XCTestCase {
         for path in ["/Applications/Cydia.app/Cydia", "/usr/libexec/cydia/cydo", "/usr/lib/libapt-pkg.dylib", "/usr/bin/dpkg", "/usr/libexec/podium_netd"] {
             XCTAssertTrue(upgraded.contains(path),"New guest must contain \(path)")
         }
+        for path in [
+            "/Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib",
+            "/Library/MobileSubstrate/DynamicLibraries/MobileSafety.dylib",
+            "/Library/MobileSubstrate/DynamicLibraries/PreferenceLoader.dylib",
+        ] {
+            XCTAssertTrue(upgraded.contains(path), "The offline tweak bootstrap must install \(path)")
+        }
+        let packageStatus = String(decoding: try upgraded.contents(of: "/private/var/lib/dpkg/status"), as: UTF8.self)
+        for package in ["mobilesubstrate", "com.saurik.substrate.safemode", "preferenceloader"] {
+            XCTAssertTrue(packageStatus.contains("Package: \(package)\nStatus: install ok installed"),
+                          "dpkg and Cydia must see \(package) as installed")
+            XCTAssertTrue(upgraded.contains("/private/var/lib/dpkg/info/\(package).list"),
+                          "dpkg must have the file list for \(package)")
+        }
+        let launchdConfig = String(decoding: try upgraded.contents(of: "/private/etc/launchd.conf"), as: UTF8.self)
+        XCTAssertTrue(launchdConfig.contains("/usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"),
+                      "Substrate must be activated at guest boot")
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
         if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {

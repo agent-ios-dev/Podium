@@ -37,6 +37,59 @@ final class PersistentGuestStorageTests: XCTestCase {
         XCTAssertEqual(snapshot.usedBytes, 5 * 512)
     }
 
+    func testExportsAndRestoresEightGiBBackupTransactionally() throws {
+        let firmwareURL = temporaryDirectory.appendingPathComponent("backup-test.ipsw")
+        try writeSyntheticHFSVolume(at: RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL),
+                                    capacity: FileBackedStorage.capacity)
+        let storage = PersistentGuestStorage(appSupportURL: applicationSupportURL)
+        let liveImage = try storage.prepareUserVolume(forFirmwareAt: firmwareURL).url
+
+        XCTAssertThrowsError(try storage.backupImageURL(emulatorIsBusy: true))
+        let backupSnapshot = try storage.backupImageURL(emulatorIsBusy: false)
+        defer { storage.discardBackupSnapshot(at: backupSnapshot) }
+        XCTAssertNotEqual(backupSnapshot, liveImage)
+        let backupAttributes = try FileManager.default.attributesOfItem(atPath: backupSnapshot.path)
+        XCTAssertEqual((backupAttributes[.size] as? NSNumber)?.uint64Value, FileBackedStorage.capacity)
+        XCTAssertEqual(try XCTUnwrap(storage.snapshot()).totalBytes, FileBackedStorage.capacity)
+        XCTAssertEqual(try readByte(at: 2048, in: backupSnapshot), try readByte(at: 2048, in: liveImage))
+        try writeByte(0x5A, at: 2048, in: liveImage)
+        XCTAssertNotEqual(try readByte(at: 2048, in: backupSnapshot), 0x5A,
+                          "an exported backup is a stable snapshot, not a live view of the disk")
+
+        let backup = temporaryDirectory.appendingPathComponent("saved-backup.hfs")
+        try writeSyntheticHFSVolume(at: backup, capacity: FileBackedStorage.capacity)
+        try writeByte(0xA5, at: 2048, in: backup)
+        XCTAssertThrowsError(try storage.stageBackupRestore(from: backup, emulatorIsBusy: true))
+
+        let originalByte = try readByte(at: 2048, in: liveImage)
+        let staging = try storage.stageBackupRestore(from: backup, emulatorIsBusy: false)
+        XCTAssertEqual(try readByte(at: 2048, in: liveImage), originalByte,
+                       "staging a backup must not mutate the active guest disk")
+        XCTAssertThrowsError(try storage.commitStagedBackupRestore(at: staging, emulatorIsBusy: true))
+        XCTAssertEqual(try readByte(at: 2048, in: liveImage), originalByte,
+                       "a power-on race must leave the active guest disk intact")
+
+        try storage.commitStagedBackupRestore(at: staging, emulatorIsBusy: false)
+        XCTAssertEqual(try readByte(at: 2048, in: liveImage), 0xA5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: liveImage.appendingPathExtension("version").path),
+                       "restored backups should be rechecked for addon updates at the next power-on")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+    }
+
+    func testInvalidBackupLeavesTheCurrentGuestDiskUnchanged() throws {
+        let firmwareURL = temporaryDirectory.appendingPathComponent("invalid-backup.ipsw")
+        try writeSyntheticHFSVolume(at: RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL))
+        let storage = PersistentGuestStorage(appSupportURL: applicationSupportURL)
+        let liveImage = try storage.prepareUserVolume(forFirmwareAt: firmwareURL).url
+        let originalByte = try readByte(at: 2048, in: liveImage)
+
+        let invalidBackup = temporaryDirectory.appendingPathComponent("not-an-8gib-backup.hfs")
+        try writeSyntheticHFSVolume(at: invalidBackup)
+        XCTAssertThrowsError(try storage.restoreBackup(from: invalidBackup, emulatorIsBusy: false))
+        XCTAssertEqual(try readByte(at: 2048, in: liveImage), originalByte)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: liveImage.appendingPathExtension("restoring").path))
+    }
+
     func testMigratesLegacyImageWithoutLosingGuestChanges() throws {
         let firmwareURL = temporaryDirectory.appendingPathComponent("old-install.ipsw")
         try writeHFSImage(at: RootFilesystemPreparer.imageURL(forFirmwareAt: firmwareURL), fill: 0x31, freeBlocks: 3)
@@ -635,9 +688,9 @@ final class PersistentGuestStorageTests: XCTestCase {
         bytes[offset + count - 1] = 0
     }
 
-    private func writeSyntheticHFSVolume(at url: URL) throws {
+    private func writeSyntheticHFSVolume(at url: URL, capacity: UInt64 = 65_536 * 512) throws {
         let blockSize: UInt32 = 512
-        let totalBlocks: UInt32 = 65_536
+        let totalBlocks = UInt32(capacity / UInt64(blockSize))
         let volumeBytes = UInt64(blockSize) * UInt64(totalBlocks)
         let root = HFSPlusCatalogRecord(parentID: 1, name: [], data: folderRecordData(id: 2))
         let privateFolder = HFSPlusCatalogRecord(parentID: 2, name: Array("private".utf16), data: folderRecordData(id: 3))
@@ -686,6 +739,21 @@ final class PersistentGuestStorageTests: XCTestCase {
         try handle.write(contentsOf: Data(headerBytes))
         try handle.seek(toOffset: volumeBytes - HFSPlusVolumeHeader.offset)
         try handle.write(contentsOf: Data(headerBytes))
+        try handle.synchronize()
+    }
+
+    private func readByte(at offset: UInt64, in url: URL) throws -> UInt8 {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: offset)
+        return try XCTUnwrap(handle.read(upToCount: 1)?.first)
+    }
+
+    private func writeByte(_ value: UInt8, at offset: UInt64, in url: URL) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: offset)
+        try handle.write(contentsOf: Data([value]))
         try handle.synchronize()
     }
 

@@ -21,6 +21,8 @@ final class PersistentGuestStorage {
         case invalidGuestFile(String)
         case duplicateGuestFile(String)
         case insufficientGuestSpace(required: UInt64, available: UInt64)
+        case invalidGuestBackup
+        case invalidGuestBackupImage(String)
         case noFirmwareForPackageInstall
         case noCompatibleFirmwareForPackageInstall
         case noFirmwareForIPAInstall
@@ -32,13 +34,15 @@ final class PersistentGuestStorage {
             switch self {
             case .appSupportUnavailable: return "Podium couldn't locate its Application Support directory."
             case .notAnHFSVolume: return "The persistent guest disk isn't a valid HFS+ volume."
-            case .deviceMustBePoweredOff: return "Power off the virtual iPod before erasing its contents."
+            case .deviceMustBePoweredOff: return "Power off the virtual iPod before changing or backing up its disk."
             case .firmwareInUse: return "Power off the virtual iPod before removing its firmware."
             case .noFirmwareForErase: return "Import compatible firmware before erasing the virtual iPod."
             case .storageNotPrepared: return "Power on the virtual iPod once before adding files."
             case .invalidGuestFile: return "A selected item isn't a regular file name that can be stored on the virtual iPod."
             case .duplicateGuestFile: return "A selected filename is repeated or already exists in Media/Podium."
             case .insufficientGuestSpace: return "There isn't enough free space to add these files while keeping guest storage available."
+            case .invalidGuestBackup: return "Choose a valid 8 GiB Podium virtual iPod backup (.hfs)."
+            case .invalidGuestBackupImage(let detail): return "This backup can't be restored: \(detail)"
             case .noFirmwareForPackageInstall: return "Import compatible iOS 6.1.6 firmware before installing packages."
             case .noCompatibleFirmwareForPackageInstall: return "Select compatible iOS 6.1.6 firmware before installing packages."
             case .noFirmwareForIPAInstall: return "Import compatible iOS 6.1.6 firmware before installing apps."
@@ -204,6 +208,102 @@ final class PersistentGuestStorage {
         }
         let blockSize = UInt64(header.blockSize)
         return Snapshot(totalBytes: UInt64(header.totalBlocks) * blockSize, freeBytes: UInt64(header.freeBlocks) * blockSize)
+    }
+
+    /// Takes a validated snapshot of the persistent 8 GiB HFS+ image for
+    /// file-based export. APFS clonefile makes this cheap when available.
+    func backupImageURL(emulatorIsBusy: Bool) throws -> URL {
+        guard !emulatorIsBusy else { throw StorageError.deviceMustBePoweredOff }
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        let imageURL = RootFilesystemPreparer.userImageURL(in: try directoryURL())
+        guard fileManager.fileExists(atPath: imageURL.path) else { throw StorageError.storageNotPrepared }
+        let snapshot = fileManager.temporaryDirectory
+            .appendingPathComponent("Podium-Backup-\(UUID().uuidString).hfs")
+        do {
+            try RootFilesystemPreparer.validateGuestDiskBackup(at: imageURL)
+            try FileBackedStorage.sparseCopy(from: imageURL, to: snapshot)
+            try RootFilesystemPreparer.validateGuestDiskBackup(at: snapshot)
+            return snapshot
+        } catch {
+            try? fileManager.removeItem(at: snapshot)
+            throw StorageError.invalidGuestBackupImage(error.localizedDescription)
+        }
+    }
+
+    /// Removes the temporary export snapshot after the share sheet completes.
+    func discardBackupSnapshot(at snapshot: URL) {
+        let standardized = snapshot.standardizedFileURL
+        guard standardized.deletingLastPathComponent() == fileManager.temporaryDirectory.standardizedFileURL,
+              standardized.lastPathComponent.hasPrefix("Podium-Backup-"),
+              standardized.pathExtension == "hfs" else { return }
+        try? fileManager.removeItem(at: standardized)
+    }
+
+    /// Replaces the guest volume transactionally. A bad or incompatible file
+    /// is rejected before touching the currently installed guest disk.
+    func restoreBackup(from sourceURL: URL, emulatorIsBusy: Bool) throws {
+        let staging = try stageBackupRestore(from: sourceURL, emulatorIsBusy: emulatorIsBusy)
+        defer { discardStagedBackupRestore(at: staging) }
+        try commitStagedBackupRestore(at: staging, emulatorIsBusy: emulatorIsBusy)
+    }
+
+    /// Copies and validates the incoming file beside the live disk. It does
+    /// not alter the live image, so a running guest can continue while a large
+    /// backup is staged; commit rechecks power state before swapping disks.
+    func stageBackupRestore(from sourceURL: URL, emulatorIsBusy: Bool) throws -> URL {
+        guard !emulatorIsBusy else { throw StorageError.deviceMustBePoweredOff }
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        let directory = try directoryURL()
+        let destination = RootFilesystemPreparer.userImageURL(in: directory)
+        guard fileManager.fileExists(atPath: destination.path) else { throw StorageError.storageNotPrepared }
+        let staging = destination.appendingPathExtension("restoring")
+        try? fileManager.removeItem(at: staging)
+        try? fileManager.removeItem(at: staging.appendingPathExtension("version"))
+        do {
+            try RootFilesystemPreparer.validateGuestDiskBackup(at: sourceURL)
+            try FileBackedStorage.sparseCopy(from: sourceURL, to: staging)
+            try RootFilesystemPreparer.validateGuestDiskBackup(at: staging)
+            return staging
+        } catch let error as StorageError {
+            try? fileManager.removeItem(at: staging)
+            try? fileManager.removeItem(at: staging.appendingPathExtension("version"))
+            throw error
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            try? fileManager.removeItem(at: staging.appendingPathExtension("version"))
+            throw StorageError.invalidGuestBackupImage(error.localizedDescription)
+        }
+    }
+
+    /// Atomically activates a staged image after another power-off check.
+    func commitStagedBackupRestore(at staging: URL, emulatorIsBusy: Bool) throws {
+        guard !emulatorIsBusy else { throw StorageError.deviceMustBePoweredOff }
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        let destination = RootFilesystemPreparer.userImageURL(in: try directoryURL())
+        let expectedStaging = destination.appendingPathExtension("restoring").standardizedFileURL
+        guard staging.standardizedFileURL == expectedStaging,
+              fileManager.fileExists(atPath: destination.path),
+              fileManager.fileExists(atPath: staging.path) else {
+            throw StorageError.invalidGuestBackup
+        }
+        do {
+            try RootFilesystemPreparer.commitRestoredGuestDisk(staging, to: destination)
+        } catch {
+            throw StorageError.invalidGuestBackupImage(error.localizedDescription)
+        }
+    }
+
+    func discardStagedBackupRestore(at staging: URL) {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        guard let directory = try? directoryURL() else { return }
+        let expected = RootFilesystemPreparer.userImageURL(in: directory).appendingPathExtension("restoring").standardizedFileURL
+        guard staging.standardizedFileURL == expected else { return }
+        try? fileManager.removeItem(at: staging)
+        try? fileManager.removeItem(at: staging.appendingPathExtension("version"))
     }
 
     @discardableResult

@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct SettingsScreen: View {
     @Environment(FirmwareLibrary.self) private var firmwareLibrary
@@ -8,14 +9,20 @@ struct SettingsScreen: View {
     @State private var guestStorage: PersistentGuestStorage.Snapshot?
     @State private var storageError: String?
     @State private var showingEraseConfirmation = false
+    @State private var showingRestoreConfirmation = false
     @State private var isErasingGuest = false
+    @State private var isCreatingGuestBackup = false
+    @State private var isRestoringGuest = false
     @State private var isImportingGuestFiles = false
+    @State private var isImportingGuestBackup = false
     @State private var isImportingPackages = false
     @State private var isImportingIPAs = false
     @State private var isInstallingPackages = false
     @State private var isInstallingIPAs = false
     @State private var guestFileError: String?
     @State private var guestFileStatus: String?
+    @State private var guestBackupURL: URL?
+    @State private var isSharingGuestBackup = false
 
     @AppStorage(AppStorageKeys.appearance) private var appearanceRawValue = AppearanceOption.dark.rawValue
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
@@ -115,6 +122,69 @@ struct SettingsScreen: View {
             refreshGuestStorage()
         } catch {
             storageError = error.localizedDescription
+        }
+    }
+
+    private func shareGuestBackup() {
+        guard !emulatorCore.isBusy, !isCreatingGuestBackup else { return }
+        let storage = firmwareLibrary.persistentGuestStorage
+        isCreatingGuestBackup = true
+        Task {
+            let result = await Task.detached(priority: .utility) {
+                Result { try storage.backupImageURL(emulatorIsBusy: false) }
+            }.value
+            isCreatingGuestBackup = false
+            do {
+                let snapshot = try result.get()
+                guard !emulatorCore.isBusy else {
+                    storage.discardBackupSnapshot(at: snapshot)
+                    throw PersistentGuestStorage.StorageError.deviceMustBePoweredOff
+                }
+                guestBackupURL = snapshot
+                isSharingGuestBackup = true
+            } catch {
+                storageError = error.localizedDescription
+            }
+        }
+    }
+
+    private func restoreGuestBackup(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            guard let url = urls.first else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            let storage = firmwareLibrary.persistentGuestStorage
+            isRestoringGuest = true
+
+            // Stage the potentially large copy off the main thread. The active
+            // guest image remains untouched until the quick, power-off-checked
+            // atomic promotion below.
+            Task {
+                let stagedResult = await Task.detached(priority: .userInitiated) {
+                    Result { try storage.stageBackupRestore(from: url, emulatorIsBusy: false) }
+                }.value
+                if accessed { url.stopAccessingSecurityScopedResource() }
+                isRestoringGuest = false
+                do {
+                    let stagedURL = try stagedResult.get()
+                    guard !emulatorCore.isBusy else {
+                        storage.discardStagedBackupRestore(at: stagedURL)
+                        throw PersistentGuestStorage.StorageError.deviceMustBePoweredOff
+                    }
+                    do {
+                        try storage.commitStagedBackupRestore(at: stagedURL, emulatorIsBusy: emulatorCore.isBusy)
+                    } catch {
+                        storage.discardStagedBackupRestore(at: stagedURL)
+                        throw error
+                    }
+                    guestFileStatus = "Restored the virtual iPod backup. Power it on to apply any newer built-in packages."
+                    refreshGuestStorage()
+                } catch {
+                    guestFileError = error.localizedDescription
+                }
+            }
+        } catch {
+            guestFileError = error.localizedDescription
         }
     }
 
@@ -279,11 +349,24 @@ struct SettingsScreen: View {
                             isImportingPackages = true
                         }
 
-                        if isInstallingIPAs || isInstallingPackages {
+                        cardDivider
+                        actionRow("Back Up Virtual iPod", detail: "Export a verified 8 GiB snapshot to Files", systemImage: "externaldrive.badge.timemachine",
+                                  isDisabled: emulatorCore.isBusy || guestStorage == nil || isErasingGuest || isRestoringGuest
+                                    || isCreatingGuestBackup || isInstallingPackages || isInstallingIPAs
+                                    || firmwareLibrary.activeFirmware?.compatibility.isCompatible != true) {
+                            shareGuestBackup()
+                        }
+                        cardDivider
+                        actionRow("Restore Backup", detail: "Replace guest data from a saved .hfs image", systemImage: "arrow.counterclockwise.icloud",
+                                  isDisabled: !canModifyGuestStorage) {
+                            showingRestoreConfirmation = true
+                        }
+
+                        if isCreatingGuestBackup || isInstallingIPAs || isInstallingPackages || isRestoringGuest {
                             cardDivider
                             HStack(spacing: 9) {
                                 ProgressView()
-                                Text(isInstallingIPAs ? "Installing apps…" : "Installing packages…")
+                                Text(isCreatingGuestBackup ? "Creating a backup snapshot…" : (isRestoringGuest ? "Validating and copying backup…" : (isInstallingIPAs ? "Installing apps…" : "Installing packages…")))
                                     .font(.footnote.weight(.medium))
                             }
                             .foregroundStyle(.secondary)
@@ -309,7 +392,9 @@ struct SettingsScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
-                        .disabled(emulatorCore.isBusy || isErasingGuest || firmwareLibrary.activeFirmware?.compatibility.isCompatible != true)
+                        .disabled(emulatorCore.isBusy || isErasingGuest || isCreatingGuestBackup || isRestoringGuest
+                            || isInstallingPackages || isInstallingIPAs
+                            || firmwareLibrary.activeFirmware?.compatibility.isCompatible != true)
                     }
                 }
 
@@ -352,11 +437,31 @@ struct SettingsScreen: View {
         .fileImporter(isPresented: $isImportingIPAs, allowedContentTypes: [.ipa], allowsMultipleSelection: true) { result in
             installIPAs(result)
         }
+        .fileImporter(isPresented: $isImportingGuestBackup, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            restoreGuestBackup(result)
+        }
         .confirmationDialog("Erase all virtual iPod data?", isPresented: $showingEraseConfirmation, titleVisibility: .visible) {
             Button("Erase Virtual iPod", role: .destructive) { eraseGuestStorage() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes installed apps, tweaks, preferences, and guest files. The firmware image remains installed.")
+        }
+        .confirmationDialog("Restore this virtual iPod backup?", isPresented: $showingRestoreConfirmation, titleVisibility: .visible) {
+            Button("Choose Backup…", role: .destructive) { isImportingGuestBackup = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The selected 8 GiB .hfs image will replace the current apps, tweaks, settings, and guest files. Podium keeps the current disk if validation fails.")
+        }
+        .sheet(isPresented: $isSharingGuestBackup, onDismiss: {
+            if let guestBackupURL {
+                firmwareLibrary.persistentGuestStorage.discardBackupSnapshot(at: guestBackupURL)
+            }
+            guestBackupURL = nil
+        }) {
+            if let guestBackupURL {
+                GuestBackupShareSheet(url: guestBackupURL)
+                    .ignoresSafeArea()
+            }
         }
         .alert("Virtual iPod Storage", isPresented: Binding(get: { storageError != nil }, set: { if !$0 { storageError = nil } })) {
             Button("OK", role: .cancel) { storageError = nil }
@@ -371,7 +476,7 @@ struct SettingsScreen: View {
     }
 
     private var canModifyGuestStorage: Bool {
-        !emulatorCore.isBusy && !isErasingGuest && !isInstallingPackages && !isInstallingIPAs
+        !emulatorCore.isBusy && !isErasingGuest && !isCreatingGuestBackup && !isRestoringGuest && !isInstallingPackages && !isInstallingIPAs
             && guestStorage != nil && firmwareLibrary.activeFirmware?.compatibility.isCompatible == true
     }
 
@@ -445,6 +550,22 @@ struct SettingsScreen: View {
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.45 : 1)
     }
+}
+
+private struct GuestBackupShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(x: controller.view.bounds.midX, y: controller.view.bounds.midY, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 #Preview {

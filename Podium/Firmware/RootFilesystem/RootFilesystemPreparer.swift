@@ -24,7 +24,7 @@ enum RootFilesystemPreparer {
         let fraction: Double
     }
 
-    enum PreparationError: Error, CustomStringConvertible {
+    enum PreparationError: LocalizedError, CustomStringConvertible {
         case wrongFirmware(String)
         case missingRootFilesystem
         case incompleteDecryption
@@ -38,6 +38,8 @@ enum RootFilesystemPreparer {
             case .invalidHFSImage(let detail): return "invalid HFS+ disk image: \(detail)"
             }
         }
+
+        var errorDescription: String? { description }
     }
 
     static let referenceBuild = "10B500"
@@ -128,6 +130,32 @@ enum RootFilesystemPreparer {
         let header=try readHFSPlusVolumeHeader(at:temporary)
         guard UInt64(header.freeBlocks)*UInt64(header.blockSize)>=8<<20 else { throw PreparationError.invalidHFSImage("Cydia needs additional guest free space") }
         try safelyPromote(temporary,to:image,markerVersion:version,fileManager:.default)
+    }
+
+    /// A backup is the raw HFS+ image, so validate its logical size, volume
+    /// geometry, and catalog before making it available to Files or replacing
+    /// the current guest disk with it.
+    static func validateGuestDiskBackup(at image: URL) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: image.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber,
+              size.uint64Value == FileBackedStorage.capacity else {
+            throw PreparationError.invalidHFSImage("the backup must be a regular 8 GiB disk image")
+        }
+
+        let header = try readHFSPlusVolumeHeader(at: image)
+        let logicalSize = UInt64(header.blockSize) * UInt64(header.totalBlocks)
+        guard logicalSize == FileBackedStorage.capacity else {
+            throw PreparationError.invalidHFSImage("the HFS+ volume is not the 8 GiB Podium guest disk")
+        }
+        _ = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
+    }
+
+    /// Promote a previously validated backup and deliberately clear the
+    /// recipe marker: the next power-on will reapply any newer guest addons.
+    static func commitRestoredGuestDisk(_ staging: URL, to destination: URL) throws {
+        try validateGuestDiskBackup(at: staging)
+        try safelyPromote(staging, to: destination, markerVersion: nil, fileManager: .default)
     }
 
     /// Rebuilds the user volume with staged host files in the guest-visible
