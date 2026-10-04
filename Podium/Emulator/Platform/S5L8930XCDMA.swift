@@ -99,6 +99,8 @@ final class S5L8930XCDMA: MMIODevice {
         let segments: [Segment]
         /// Where the controller's command pointer (CAR) comes to rest.
         let end: UInt32
+        /// DBR is the remaining byte count for this programmed transfer.
+        let initialByteCount: Int
         var segment = 0
         var offset = 0
         var moved = 0
@@ -153,6 +155,8 @@ final class S5L8930XCDMA: MMIODevice {
             return
         }
         let old = registers[Int(offset / 4)]
+        let wasRunning = old & Self.csrStateMask == Self.csrStateRunning
+        let wasPaused = old & Self.csrPaused != 0
         var csr = (value & ~(Self.csrWriteOneToClear | Self.csrStateMask)) | (old & (Self.csrWriteOneToClear | Self.csrStateMask))
         csr &= ~(value & Self.csrWriteOneToClear)
         // Pausing (bit 2) halts the channel where it is, and says so in bit
@@ -164,12 +168,20 @@ final class S5L8930XCDMA: MMIODevice {
             csr &= ~(Self.csrStateMask | Self.csrStart | Self.csrAbort | Self.csrPause | Self.csrPaused)
             peripheralTransfers[channel] = nil
         }
-        if value & Self.csrStart != 0, old & Self.csrStateMask == 0 {
+        if value & Self.csrStart != 0, !wasRunning || wasPaused {
             csr = (csr & ~(Self.csrStateMask | Self.csrPause | Self.csrPaused)) | Self.csrStateRunning
         }
         registers[Int(offset / 4)] = csr
         if csr & (Self.csrError | Self.csrDone) == 0 { setInterruptLine(Self.firstInterruptLine + channel, false) }
-        if value & Self.csrStart != 0 { startIfReady(channel) }
+        if value & Self.csrStart != 0 {
+            if !wasRunning {
+                startIfReady(channel)
+            } else if wasPaused {
+                // Continue the existing command at its saved MAR/DBR offset;
+                // rebuilding it from CAR would replay bytes already sent.
+                pumpPeripherals()
+            }
+        }
     }
 
     /// A memory-to-memory pair (odd source, even sink) runs once both
@@ -184,8 +196,13 @@ final class S5L8930XCDMA: MMIODevice {
             }
             // DCR bit 1: memory to peripheral (openiBoot's "out").
             let chain = walkChain(at: register(channel, 0x14))
-            peripheralTransfers[channel] = PeripheralTransfer(toPeripheral: register(channel, 0x4) & 2 != 0, endpoint: endpoint,
-                                                              segments: chain.segments, end: chain.end)
+            let segmentBytes = chain.segments.reduce(0) { $0 + $1.length }
+            let programmedBytes = Int(register(channel, 0xC))
+            let transfer = PeripheralTransfer(toPeripheral: register(channel, 0x4) & 2 != 0, endpoint: endpoint,
+                                              segments: chain.segments, end: chain.end,
+                                              initialByteCount: programmedBytes == 0 ? segmentBytes : programmedBytes)
+            peripheralTransfers[channel] = transfer
+            updateProgress(channel, transfer: transfer)
             log?(String(format: "cdma| channel %d chain at %08x: %@ -> %08x", channel, register(channel, 0x14), chain.commands, chain.end))
             log?(String(format: "cdma| channel %d started: %@ %08x, dcr %08x, %d bytes", channel, register(channel, 0x4) & 2 != 0 ? "to" : "from",
                         dataRegister, register(channel, 0x4), peripheralTransfers[channel]!.segments.reduce(0) { $0 + $1.length }))
@@ -230,10 +247,11 @@ final class S5L8930XCDMA: MMIODevice {
                 }
                 if transfer.segment >= transfer.segments.count {
                     peripheralTransfers[channel] = nil
-                    setRegister(channel, 0x14, transfer.end)
+                    updateProgress(channel, transfer: transfer)
                     finish(channel)
                     log?(String(format: "cdma| channel %d: %d bytes %@ peripheral", channel, transfer.moved, transfer.toPeripheral ? "to" : "from"))
                 } else {
+                    updateProgress(channel, transfer: transfer)
                     peripheralTransfers[channel] = transfer
                 }
             }
@@ -247,7 +265,26 @@ final class S5L8930XCDMA: MMIODevice {
         if csr & Self.csrInterruptEnable != 0 { setInterruptLine(Self.firstInterruptLine + channel, true) }
     }
 
-    private struct Segment { let address: UInt32; let length: Int }
+    private func updateProgress(_ channel: Int, transfer: PeripheralTransfer) {
+        let remaining = max(0, transfer.initialByteCount - transfer.moved)
+        setRegister(channel, 0xC, UInt32(clamping: remaining))
+        if transfer.segment < transfer.segments.count {
+            let segment = transfer.segments[transfer.segment]
+            setRegister(channel, 0x10, segment.address &+ UInt32(clamping: transfer.offset))
+            setRegister(channel, 0x14, segment.descriptorAddress)
+        } else if let last = transfer.segments.last {
+            setRegister(channel, 0x10, last.address &+ UInt32(clamping: last.length))
+            setRegister(channel, 0x14, transfer.end)
+        } else {
+            setRegister(channel, 0x14, transfer.end)
+        }
+    }
+
+    private struct Segment {
+        let descriptorAddress: UInt32
+        let address: UInt32
+        let length: Int
+    }
 
     private func segments(ofChainAt start: UInt32) -> [Segment] {
         walkChain(at: start).segments
@@ -266,10 +303,10 @@ final class S5L8930XCDMA: MMIODevice {
         for _ in 0..<4096 {
             guard let command = try? bus.readWord32(at: descriptor &+ 4), command != 0 else { break }
             commands.append(String(format: "%x", command))
-            if command & 3 == 3, let address = try? bus.readWord32(at: descriptor &+ 8), let length = try? bus.readWord32(at: descriptor &+ 12) {
-                result.append(Segment(address: address, length: Int(length)))
-            }
             guard let next = try? bus.readWord32(at: descriptor) else { break }
+            if command & 3 == 3, let address = try? bus.readWord32(at: descriptor &+ 8), let length = try? bus.readWord32(at: descriptor &+ 12) {
+                result.append(Segment(descriptorAddress: descriptor, address: address, length: Int(length)))
+            }
             if command & 0x100 != 0 { descriptor = next; break }
             descriptor = next
         }

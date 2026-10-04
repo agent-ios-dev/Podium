@@ -7,7 +7,8 @@ final class S5L8930XI2STests: XCTestCase {
         var irq = false
         let dma = S5L8930XCDMA(memory: { memory }, setInterruptLine: { _, asserted in irq = asserted })
         let audio = S5L8930XI2S()
-        dma.attach(audio, dataRegister: S5L8930XPlatform.i2s0Base + S5L8930XI2S.transmitData)
+        audio.enableOutputTransport()
+        dma.attach(audio, dataRegister: S5L8930XPlatform.i2s0TransmitDMAAddress)
         audio.dmaRequest = { dma.pumpPeripherals() }
         var samples = [Float]()
         audio.onSamples = { samples.append(contentsOf: $0) }
@@ -19,19 +20,34 @@ final class S5L8930XI2STests: XCTestCase {
             try memory.writeWord32(0xC000_4000, at: offset)
         }
         audio.writeRegister(1, at: 0); audio.writeRegister(2, at: 8)
-        dma.writeRegister(2, at: 0x5004)
-        dma.writeRegister(S5L8930XPlatform.i2s0Base + S5L8930XI2S.transmitData, at: 0x5008)
-        dma.writeRegister(0x100, at: 0x5014)
-        dma.writeRegister(9, at: 0x5000)
+        let channel: UInt32 = 20 // A4 DMA_I2S0_TX
+        let channelBase = channel << 12
+        dma.writeRegister(2, at: channelBase + 0x4)
+        dma.writeRegister(S5L8930XPlatform.i2s0TransmitDMAAddress, at: channelBase + 0x8)
+        dma.writeRegister(8192, at: channelBase + 0xC)
+        dma.writeRegister(0x100, at: channelBase + 0x14)
+        dma.writeRegister(9, at: channelBase)
         XCTAssertFalse(irq, "Filling the FIFO must not instantly consume an entire audio buffer")
         XCTAssertTrue(samples.isEmpty)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0x10), 0x2000, "MAR must follow bytes accepted by the I2S FIFO")
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0xC), 4096, "DBR must report the bytes still outstanding")
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0x14), 0x100, "CAR must remain on the descriptor being transferred")
+
+        dma.writeRegister(13, at: channelBase) // pause, preserving interrupt enable
+        XCTAssertNotEqual(dma.readRegister(at: channelBase) & (1 << 21), 0)
+        dma.writeRegister(9, at: channelBase) // resume this descriptor
+        XCTAssertEqual(dma.readRegister(at: channelBase) & (1 << 21), 0)
         audio.advance(toTick: 0); audio.advance(toTick: 24_000)
         XCTAssertEqual(samples.count, 88)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0x10), 0x20B0)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0xC), 3920)
         XCTAssertEqual(Array(samples.prefix(4)), [0.5,-0.5,0.5,-0.5])
         audio.advance(toTick: 2_400_000)
         XCTAssertTrue(irq)
         XCTAssertEqual(samples.count, 4096)
-        XCTAssertEqual(dma.readRegister(at: 0x5014), 0x120)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0x10), 0x3000)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0xC), 0)
+        XCTAssertEqual(dma.readRegister(at: channelBase + 0x14), 0x120)
         audio.writeRegister(0, at: 8)
         XCTAssertNotEqual(audio.readRegister(at: 0) & S5L8930XI2S.controlChannelIdle, 0)
         let before = samples.count; audio.advance(toTick: 4_800_000)

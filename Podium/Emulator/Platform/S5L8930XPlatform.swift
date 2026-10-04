@@ -35,6 +35,9 @@ final class S5L8930XPlatform: DeviceEventHandler {
     static let i2c2Base: UInt32 = 0x0340_0000
     static let i2c0InterruptLine = 0x13
     static let i2s0Base: UInt32 = 0x0450_0400
+    /// A4 CDMA's I2S0 TX peripheral route (the DMA register has this
+    /// peripheral-side address even though the CPU MMIO window is elsewhere).
+    static let i2s0TransmitDMAAddress: UInt32 = 0x8000_0020
     static let dart2Base: UInt32 = 0x09D0_0000
     static let displayPipeBase: UInt32 = 0x0900_0000
     static let clcdBase: UInt32 = 0x0920_0000
@@ -139,6 +142,7 @@ final class S5L8930XPlatform: DeviceEventHandler {
     func enableAudioOutput() {
         guard !i2s0.transportEnabled else { return }
         i2s0.enableOutputTransport()
+        cdma.attach(i2s0, dataRegister: Self.i2s0TransmitDMAAddress)
         cdma.attach(i2s0, dataRegister: Self.i2s0Base + S5L8930XI2S.transmitData)
         i2s0.dmaRequest = { [unowned self] in self.cdma.pumpPeripherals() }
         i2s0.clockChanged = { [unowned self] in self.rescheduleNextEvent() }

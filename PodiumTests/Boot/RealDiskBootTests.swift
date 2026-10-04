@@ -169,7 +169,7 @@ final class RealDiskBootTests: XCTestCase {
             }
             return nil
         }()
-        let testSubstrateInjection = (substrateMode == "launchd" || substrateMode == "dyld_environment") && probeURL != nil
+        let testSubstrateInjection = !testAudio && (substrateMode == "launchd" || substrateMode == "dyld_environment") && probeURL != nil
         if testSubstrateInjection {
             let probe = try XCTUnwrap(probeURL, "Substrate injection requested, but the probe dylib was not built or located.")
             try Self.installSubstrateProbe(probe, into: image)
@@ -182,8 +182,10 @@ final class RealDiskBootTests: XCTestCase {
         }
         setenv("PODIUM_NETWORK_TEST", "1", 1)
         defer { unsetenv("PODIUM_DISK_TRACE"); unsetenv("PODIUM_NETWORK_TEST") }
+        let testAudio = ProcessInfo.processInfo.environment["PODIUM_TEST_AUDIO"] == "1"
         let audio = GuestAudioCapture()
-        let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true, audioOutput: audio)
+        let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true,
+                                           audioOutput: audio, audioEnabled: testAudio)
         session.platform.i2s0.traceAccess = { print("AUDIOTRACE: \($0)") }
         session.platform.cdma.log = { line in
             if line.contains("peripheral") || line.contains("started") { print("AUDIOTRACE: \(line)") }
@@ -240,10 +242,11 @@ final class RealDiskBootTests: XCTestCase {
             }
             if EmulatorCore.lockScreenIsUp(session.display) {
                 lockScreenAppeared = true
-                if bootOnly { break }
+                if bootOnly && !testAudio { break }
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") && audio.nonzeroSamples > 20_000 { break }
+                if testAudio && audio.nonzeroSamples > 20_000 { break }
+                if !testAudio && events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") && audio.nonzeroSamples > 20_000 { break }
             }
         }
         // The small kernel ring can overwrite early mount messages before
@@ -257,6 +260,12 @@ final class RealDiskBootTests: XCTestCase {
                           "Substrate must load a SpringBoard-filtered tweak and run its constructor")
             XCTAssertEqual(String(decoding: try booted.contents(of: probeMarker), as: UTF8.self),
                            "SpringBoard tweak constructor ran\n")
+        }
+        if testAudio {
+            XCTAssertGreaterThan(audio.nonzeroSamples, 20_000,
+                                 "The real guest must send non-silent PCM through its I2S/CDMA audio path")
+            print("AUDIOTRACE: captured \(audio.nonzeroSamples) nonzero samples at \(audio.sampleRate) Hz")
+            return
         }
         if bootOnly { return }
         XCTAssertTrue(session.guestNetwork.messages.contains("utun configured 10.0.2.15 -> 10.0.2.2"), "Guest tunnel must be configured")

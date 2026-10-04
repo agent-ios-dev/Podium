@@ -26,7 +26,7 @@ struct SettingsScreen: View {
 
     @AppStorage(AppStorageKeys.appearance) private var appearanceRawValue = AppearanceOption.dark.rawValue
     @AppStorage(AppStorageKeys.iPodCase) private var iPodCase = false
-    @AppStorage(AppStorageKeys.experimentalAudio) private var experimentalAudio = false
+    @AppStorage(AppStorageKeys.experimentalAudio) private var experimentalAudio = true
     @AppStorage(AppStorageKeys.experimentalFirmware) private var experimentalFirmware = false
     @AppStorage(AppStorageKeys.experimentalDisplayResolution) private var displayResolutionDivisor = 1
     @AppStorage(AppStorageKeys.customDisplayWidth) private var customDisplayWidth = 640
@@ -293,8 +293,8 @@ struct SettingsScreen: View {
                         cardDivider
 
                         VStack(alignment: .leading, spacing: 7) {
-                            Toggle("Experimental audio output", isOn: $experimentalAudio)
-                            Text("Sends guest audio through the phone speaker. This option is off by default while I fix the guest CDMA stop panic.")
+                            Toggle("Guest audio output", isOn: $experimentalAudio)
+                            Text("Plays iOS audio through the phone's current audio route. Turn this off to mute the virtual iPod.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
