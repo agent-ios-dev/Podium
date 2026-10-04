@@ -10,7 +10,7 @@ enum IOSRootCertificateInstaller {
     static let supportedTrustStorePaths = [trustStorePath]
     static let certificateArchiveResource = "tlsroot-root-certificates.zip"
     static let expectedCertificateCount = 32
-    private static let expectedArchiveSHA256 = "61eacb61e6d0a27cfab717f6520bdc8e33da7b7830bee391ba08b3e16c1a61a3"
+    private static let expectedArchiveSHA256 = "7eccf11f3d5af656a2da04c56d882bcb519ea9b883e9ef0f2c60163e68bd0d01"
     private static let isrgRootX1SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
     private static let trustSettings = Data("""
     <?xml version="1.0" encoding="UTF-8"?>

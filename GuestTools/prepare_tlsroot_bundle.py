@@ -1,5 +1,6 @@
 """Rebuild the pinned TLSRoot.litten.ca iOS 5+ root certificate bundle."""
 
+import base64
 import hashlib
 import json
 import plistlib
@@ -99,14 +100,23 @@ def main() -> None:
         item = items[filename]
         if item.get("PayloadType") != "com.apple.security.pkcs1":
             raise ValueError(f"Unexpected payload type for {filename}")
-        der = item.get("PayloadContent")
-        if not isinstance(der, bytes) or hashlib.sha256(der).hexdigest() != expected_sha256:
+        certificate = item.get("PayloadContent")
+        if not isinstance(certificate, bytes) or hashlib.sha256(certificate).hexdigest() != expected_sha256:
             raise ValueError(f"Certificate fingerprint mismatch: {filename}")
+        if certificate.startswith(b"-----BEGIN CERTIFICATE-----"):
+            encoded = b"".join(
+                line.strip() for line in certificate.splitlines()
+                if line.strip() and not line.startswith(b"-----")
+            )
+            certificate = base64.b64decode(encoded, validate=True)
+        if not certificate.startswith(b"\x30"):
+            raise ValueError(f"Certificate payload is not DER: {filename}")
+        der_sha256 = hashlib.sha256(certificate).hexdigest()
         path = "certs/" + filename
-        entries[path] = der
+        entries[path] = certificate
         certificates.append({
             "path": path,
-            "sha256": expected_sha256,
+            "sha256": der_sha256,
             "displayName": item.get("PayloadDisplayName", filename),
         })
 
