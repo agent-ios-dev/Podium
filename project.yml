@@ -65,7 +65,7 @@ targets:
     resources:
       - path: PodiumTests/Resources/ISRGRootX1.cer
       - path: PodiumTests/Resources/tlsroot-root-certificates.zip
-      - path: GuestTools/substrate_probe/build/PodiumInjectionProbe.dylib
+      - path: GuestTools/substrate_probe/build/PodiumInjectionProbe.bin
     dependencies:
       - target: Podium
     settings:

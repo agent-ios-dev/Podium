@@ -13,4 +13,5 @@ xcrun ld -dylib -arch armv7 -platform_version ios 6.0 6.0 \
 xcrun codesign_allocate -i "$tmp/probe.unsigned" -a armv7 4096 -o "$tmp/probe.signed"
 python3 ../keybag_bootstrap/legacy_adhoc_sign.py "$tmp/probe.signed" com.podium.substrate-probe
 cp "$tmp/probe.signed" build/PodiumInjectionProbe.dylib
+cp "$tmp/probe.signed" build/PodiumInjectionProbe.bin
 echo "Built $(pwd)/build/PodiumInjectionProbe.dylib"

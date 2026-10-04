@@ -143,11 +143,14 @@ final class RealDiskBootTests: XCTestCase {
         }
 
         let probeURL: URL? = {
+            if let url = Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "bin") {
+                return url
+            }
             if let path = ProcessInfo.processInfo.environment["PODIUM_SUBSTRATE_PROBE_PATH"],
                FileManager.default.fileExists(atPath: path) {
                 return URL(fileURLWithPath: path)
             }
-            return Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "dylib")
+            return nil
         }()
         if testSubstrateInjection {
             let probe = try XCTUnwrap(probeURL, "Substrate injection requested, but the probe dylib was not built or located.")

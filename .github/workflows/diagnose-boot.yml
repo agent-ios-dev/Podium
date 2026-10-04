@@ -35,7 +35,7 @@ jobs:
           zsh GuestTools/podium_netd/build.sh
           zsh GuestTools/substrate_probe/build.sh
           xcodegen generate
-          export PODIUM_SUBSTRATE_PROBE_PATH="$PWD/GuestTools/substrate_probe/build/PodiumInjectionProbe.dylib"
+          export PODIUM_SUBSTRATE_PROBE_PATH="$PWD/GuestTools/substrate_probe/build/PodiumInjectionProbe.bin"
           if [ '${{ inputs.substrate_injection }}' = true ]; then export PODIUM_TEST_SUBSTRATE_INJECTION=1; fi
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Release -destination "platform=iOS Simulator,id=$BOOT_SIMULATOR" -derivedDataPath build-boot -only-testing:PodiumTests/RealDiskBootTests -only-testing:PodiumTests/GuestDiskShimExecutionTests -only-testing:PodiumTests/FileBackedStorageTests -resultBundlePath boot-result.xcresult CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES DEVELOPMENT_TEAM='' test
       - name: Export guest display evidence
