@@ -126,12 +126,33 @@ final class RealDiskBootTests: XCTestCase {
         }
         let upgradedLaunchdConfig = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
         XCTAssertTrue(upgradedLaunchdConfig.contains(preservedLaunchdSetting), "Substrate setup must preserve existing launchd settings")
-        XCTAssertTrue(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
-                      "The iOS 6 Substrate launcher must be scheduled by launchd.conf")
+        let testSubstrateInjection = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_INJECTION"] == "1"
+        if testSubstrateInjection {
+            XCTAssertTrue(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
+                          "The iOS 6 Substrate launcher must be scheduled by launchd.conf")
+        } else {
+            // First prove that the guest reaches SpringBoard without an injector.
+            // This separates a firmware/emulator boot regression from Substrate
+            // startup failures before the actual injection test is attempted.
+            let baselineConfig = upgradedLaunchdConfig
+                .replacingOccurrences(of: JailbreakBootstrap.substrateLaunchCommand + "\n", with: "")
+            XCTAssertNotEqual(baselineConfig, upgradedLaunchdConfig,
+                              "The baseline control must remove the Substrate launcher")
+            try upgraded.replaceContents(of: launchdConfigPath, with: Array(baselineConfig.utf8))
+            try Self.writeGuestImage(upgraded, replacing: image)
+        }
 
-        let probeURL = Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "dylib")
-        if let probeURL { try Self.installSubstrateProbe(probeURL, into: image) }
-        else { print("SUBSTRATE PROBE: test dylib wasn't built; launchd hook boot is still exercised") }
+        let probeURL: URL? = {
+            if let path = ProcessInfo.processInfo.environment["PODIUM_SUBSTRATE_PROBE_PATH"],
+               FileManager.default.fileExists(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+            return Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "dylib")
+        }()
+        if testSubstrateInjection {
+            let probe = try XCTUnwrap(probeURL, "Substrate injection requested, but the probe dylib was not built or located.")
+            try Self.installSubstrateProbe(probe, into: image)
+        }
 
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
@@ -212,7 +233,7 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(session.guestNetwork.messages.contains("Safari foreground"), "Safari must open inside the guest")
         XCTAssertTrue(session.guestNetwork.messages.contains("Cydia foreground"), "Cydia must open inside the guest")
         session.stop()
-        if probeURL != nil {
+        if testSubstrateInjection {
             let booted = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
             let probeMarker = "/private/var/mobile/Library/Preferences/PodiumSubstrateInjectionProbe"
             XCTAssertTrue(booted.contains(probeMarker),
@@ -240,7 +261,11 @@ final class RealDiskBootTests: XCTestCase {
                             mode: 0o755, template: "/usr/libexec/keybagd")
         try builder.addFile(filterPath, contents: Array(filter.utf8), owner: 0, group: 0,
                             mode: 0o644, template: "/private/etc/fstab")
-        let staging = image.appendingPathExtension("substrate-probe")
+        try writeGuestImage(builder, replacing: image)
+    }
+
+    private static func writeGuestImage(_ builder: RootFilesystemBuilder, replacing image: URL) throws {
+        let staging = image.appendingPathExtension("integration-test")
         defer { try? FileManager.default.removeItem(at: staging) }
         try builder.write(to: staging, freeSpace: 8 << 20, maximumVolumeBytes: FileBackedStorage.capacity)
         try FileManager.default.removeItem(at: image)
