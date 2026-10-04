@@ -126,19 +126,26 @@ final class RealDiskBootTests: XCTestCase {
         }
         let upgradedLaunchdConfig = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
         XCTAssertTrue(upgradedLaunchdConfig.contains(preservedLaunchdSetting), "Substrate setup must preserve existing launchd settings")
-        let testSubstrateInjection = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_INJECTION"] == "1"
-        if testSubstrateInjection {
+        let substrateMode = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_MODE"] ?? "baseline"
+        let testSubstrateInjection = substrateMode == "launchd" || substrateMode == "dyld_environment"
+        XCTAssertTrue(["baseline", "launchd", "dyld_environment"].contains(substrateMode),
+                      "Unknown Substrate boot mode: \(substrateMode)")
+        if substrateMode == "launchd" {
             XCTAssertTrue(upgradedLaunchdConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
                           "The iOS 6 Substrate launcher must be scheduled by launchd.conf")
         } else {
-            // First prove that the guest reaches SpringBoard without an injector.
-            // This separates a firmware/emulator boot regression from Substrate
-            // startup failures before the actual injection test is attempted.
+            // The baseline separates a firmware/emulator boot regression from
+            // Substrate startup. dyld_environment tests Substrate's documented
+            // fallback, which inserts its Bootstrap dylib into SpringBoard via
+            // DYLD_INSERT_LIBRARIES instead of injecting launchd with cynject.
             let baselineConfig = upgradedLaunchdConfig
                 .replacingOccurrences(of: JailbreakBootstrap.substrateLaunchCommand + "\n", with: "")
             XCTAssertNotEqual(baselineConfig, upgradedLaunchdConfig,
-                              "The baseline control must remove the Substrate launcher")
+                              "The selected non-launchd mode must remove the Substrate launcher")
             try upgraded.replaceContents(of: launchdConfigPath, with: Array(baselineConfig.utf8))
+            if substrateMode == "dyld_environment" {
+                try Self.applySubstrateDyldEnvironment(to: upgraded)
+            }
             try Self.writeGuestImage(upgraded, replacing: image)
         }
 
@@ -265,6 +272,21 @@ final class RealDiskBootTests: XCTestCase {
         try builder.addFile(filterPath, contents: Array(filter.utf8), owner: 0, group: 0,
                             mode: 0o644, template: "/private/etc/fstab")
         try writeGuestImage(builder, replacing: image)
+    }
+
+    private static func applySubstrateDyldEnvironment(to builder: RootFilesystemBuilder) throws {
+        let launchDaemonPath = "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
+        XCTAssertTrue(builder.contains(launchDaemonPath), "iOS 6 must have SpringBoard's launchd job plist")
+        try builder.editPropertyList(launchDaemonPath) { job in
+            let variables = (job["EnvironmentVariables"] as? NSMutableDictionary) ?? NSMutableDictionary()
+            let current = variables["DYLD_INSERT_LIBRARIES"] as? String ?? ""
+            let libraries = current.split(separator: ":").map(String.init)
+            let substrateLibrary = "/Library/MobileSubstrate/MobileSubstrate.dylib"
+            if !libraries.contains(substrateLibrary) {
+                variables["DYLD_INSERT_LIBRARIES"] = current.isEmpty ? substrateLibrary : current + ":" + substrateLibrary
+            }
+            job["EnvironmentVariables"] = variables
+        }
     }
 
     private static func writeGuestImage(_ builder: RootFilesystemBuilder, replacing image: URL) throws {
