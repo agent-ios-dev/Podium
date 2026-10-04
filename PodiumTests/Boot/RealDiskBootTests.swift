@@ -99,7 +99,19 @@ final class RealDiskBootTests: XCTestCase {
         try installed.addFile(launchdConfigPath,
                               contents: Array((preservedLaunchdSetting + "\n").utf8),
                               template: "/private/etc/fstab")
-        try installed.remove(JailbreakBootstrap.markerPath)
+
+        // Model a volume created by the previous release: Substrate's files
+        // and dpkg records are already present, but that release deliberately
+        // removed the launchd hook. A signature mismatch must reapply the
+        // bootstrap without losing user data or existing launchd settings.
+        try JailbreakBootstrap.apply(to: installed)
+        let priorReleaseConfig = String(decoding: try installed.contents(of: launchdConfigPath), as: UTF8.self)
+            .replacingOccurrences(of: JailbreakBootstrap.substrateLaunchCommand + "\n", with: "")
+        XCTAssertFalse(priorReleaseConfig.contains(JailbreakBootstrap.substrateLaunchCommand),
+                       "The migration fixture must start without Substrate's launchd hook")
+        try installed.replaceContents(of: launchdConfigPath, with: Array(priorReleaseConfig.utf8))
+        try installed.replaceContents(of: JailbreakBootstrap.markerPath,
+                                      with: Array("5:previous-release-without-substrate-hook".utf8))
         try installed.write(to:image.appendingPathExtension("upgrade-test"),freeSpace:8<<20,maximumVolumeBytes:FileBackedStorage.capacity)
         try FileManager.default.removeItem(at:image)
         try FileManager.default.moveItem(at:image.appendingPathExtension("upgrade-test"),to:image)
