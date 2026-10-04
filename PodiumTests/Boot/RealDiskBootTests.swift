@@ -159,6 +159,7 @@ final class RealDiskBootTests: XCTestCase {
             try Self.writeGuestImage(upgraded, replacing: image)
         }
 
+        let testAudio = ProcessInfo.processInfo.environment["PODIUM_TEST_AUDIO"] == "1"
         let probeURL: URL? = {
             if let url = Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "bin") {
                 return url
@@ -182,7 +183,6 @@ final class RealDiskBootTests: XCTestCase {
         }
         setenv("PODIUM_NETWORK_TEST", "1", 1)
         defer { unsetenv("PODIUM_DISK_TRACE"); unsetenv("PODIUM_NETWORK_TEST") }
-        let testAudio = ProcessInfo.processInfo.environment["PODIUM_TEST_AUDIO"] == "1"
         let audio = GuestAudioCapture()
         let session = try EmulationSession(kernel: kernel, deviceTree: tree, rootFilesystem: image, persistent: true,
                                            audioOutput: audio, audioEnabled: testAudio)
