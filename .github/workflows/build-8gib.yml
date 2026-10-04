@@ -51,7 +51,7 @@ jobs:
           if [ '${{ inputs.test_scope }}' = reference-truststore ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreAndRussianLocale); fi
           if [ '${{ inputs.test_scope }}' = reference-inventory ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreInventory); fi
           if [ '${{ inputs.test_scope }}' = reference-boot ]; then test_args=(-only-testing:PodiumTests/PersistentGuestStorageTests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareBootWithFileBackedDisk); fi
-          if [ '${{ inputs.test_scope }}' = audio-integration ]; then test_args=(-only-testing:PodiumTests/S5L8930XI2STests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareBootWithFileBackedDisk); export PODIUM_TEST_AUDIO=1; fi
+          if [ '${{ inputs.test_scope }}' = audio-integration ]; then test_args=(-only-testing:PodiumTests/S5L8930XI2STests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareAudioPlayback); fi
           xcodebuild -project Podium.xcodeproj -scheme Podium -configuration Debug -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath build-tests "${test_args[@]}" CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM='' test
       - uses: actions/upload-artifact@v4
         if: success()

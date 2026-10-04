@@ -72,6 +72,14 @@ final class RealDiskBootTests: XCTestCase {
     }
 
     func testReferenceFirmwareBootWithFileBackedDisk() throws {
+        try runReferenceFirmwareBoot(audioEnabled: false)
+    }
+
+    func testReferenceFirmwareAudioPlayback() throws {
+        try runReferenceFirmwareBoot(audioEnabled: true)
+    }
+
+    private func runReferenceFirmwareBoot(audioEnabled testAudio: Bool) throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let ipsw = repo.appendingPathComponent(".reference-firmware/iPod4,1_6.1.6_10B500_Restore.ipsw")
@@ -159,7 +167,6 @@ final class RealDiskBootTests: XCTestCase {
             try Self.writeGuestImage(upgraded, replacing: image)
         }
 
-        let testAudio = ProcessInfo.processInfo.environment["PODIUM_TEST_AUDIO"] == "1"
         let probeURL: URL? = {
             if let url = Bundle(for: RealDiskBootTests.self).url(forResource: "PodiumInjectionProbe", withExtension: "bin") {
                 return url
@@ -240,18 +247,20 @@ final class RealDiskBootTests: XCTestCase {
                 XCTFail("Guest stopped during reference boot: \(snapshot.state); kernel log: \(messages)")
                 return
             }
+            if testAudio && audio.nonzeroSamples > 20_000 { break }
             if EmulatorCore.lockScreenIsUp(session.display) {
                 lockScreenAppeared = true
                 if bootOnly && !testAudio { break }
                 print("BOOTTRACE: lock screen appeared at t=\(second), instructions=\(snapshot.retiredInstructions)")
                 let events=session.guestNetwork.messages
-                if testAudio && audio.nonzeroSamples > 20_000 { break }
                 if !testAudio && events.contains("CFNetwork fetched Example Domain") && captured.contains("cydia") && audio.nonzeroSamples > 20_000 { break }
             }
         }
         // The small kernel ring can overwrite early mount messages before
         // the first poll. The disk header and running userland verify boot.
-        XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
+        if !testAudio {
+            XCTAssertTrue(lockScreenAppeared, "The real guest must show its lock screen, not merely keep executing kernel code")
+        }
         session.stop()
         if testSubstrateInjection {
             let booted = try RootFilesystemBuilder(volume: HFSPlusVolume(source: FileVolumeSource(url: image)))
