@@ -10,7 +10,7 @@ enum IOSRootCertificateInstaller {
     static let supportedTrustStorePaths = [trustStorePath]
     static let certificateArchiveResource = "tlsroot-root-certificates.zip"
     static let expectedCertificateCount = 32
-    private static let expectedArchiveSHA256 = "411ebd84cccea419e3a8d872abb9175c2cae9d346cc18da6b5fb213baa705ed1"
+    private static let expectedArchiveSHA256 = "61eacb61e6d0a27cfab717f6520bdc8e33da7b7830bee391ba08b3e16c1a61a3"
     private static let isrgRootX1SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
     private static let trustSettings = Data("""
     <?xml version="1.0" encoding="UTF-8"?>
@@ -38,6 +38,7 @@ enum IOSRootCertificateInstaller {
         case missingCertificate
         case wrongCertificate
         case invalidCertificate
+        case invalidManifest(String)
         case invalidTrustStore(String)
         case sqlite(String)
 
@@ -46,6 +47,7 @@ enum IOSRootCertificateInstaller {
             case .missingCertificate: return "The bundled TLS root certificate archive is missing."
             case .wrongCertificate: return "A bundled TLS root certificate failed its SHA-256 check."
             case .invalidCertificate: return "The bundled TLS root manifest or a certificate is invalid."
+            case .invalidManifest(let detail): return "The bundled TLS root manifest is invalid: \(detail)"
             case .invalidTrustStore(let detail): return "The guest TrustStore database is invalid: \(detail)"
             case .sqlite(let detail): return "Couldn't update the guest TrustStore database: \(detail)"
             }
@@ -64,10 +66,23 @@ enum IOSRootCertificateInstaller {
             throw InstallError.wrongCertificate
         }
         let archive = try ZipArchiveReader(fileURL: archiveURL)
-        guard let manifestEntry = archive.entry(named: "manifest.json"),
-              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: archive.data(for: manifestEntry)),
-              manifest.certificates.count == expectedCertificateCount else {
-            throw InstallError.invalidCertificate
+        guard let manifestEntry = archive.entry(named: "manifest.json") else {
+            throw InstallError.invalidManifest("manifest.json is missing")
+        }
+        let manifestData: Data
+        do {
+            manifestData = try archive.data(for: manifestEntry)
+        } catch {
+            throw InstallError.invalidManifest("could not read manifest.json: \(error)")
+        }
+        let manifest: BundleManifest
+        do {
+            manifest = try JSONDecoder().decode(BundleManifest.self, from: manifestData)
+        } catch {
+            throw InstallError.invalidManifest("could not decode manifest.json: \(error)")
+        }
+        guard manifest.certificates.count == expectedCertificateCount else {
+            throw InstallError.invalidManifest("expected \(expectedCertificateCount) certificates, found \(manifest.certificates.count)")
         }
         var paths = Set<String>()
         for certificate in manifest.certificates {
@@ -77,7 +92,7 @@ enum IOSRootCertificateInstaller {
                   certificate.sha256.count == 64,
                   certificate.sha256.allSatisfy({ $0.isHexDigit }),
                   archive.entry(named: certificate.path) != nil else {
-                throw InstallError.invalidCertificate
+                throw InstallError.invalidManifest("an entry has an invalid path, fingerprint, or missing certificate file")
             }
         }
         // A clean iOS 6.1.6 restore image has /private/var/Keychains but no

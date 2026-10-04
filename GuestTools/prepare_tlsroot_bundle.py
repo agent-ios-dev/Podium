@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PROFILE_CMS = ROOT / "GuestTools/tlsroot-signed-ios-bundle.mobileconfig"
 PROFILE_PAYLOAD = ROOT / "GuestTools/tlsroot-signed-profile.plist"
 OUTPUT = ROOT / "Podium/Resources/GuestTools/tlsroot-root-certificates.zip"
+TEST_OUTPUT = ROOT / "PodiumTests/Resources/tlsroot-root-certificates.zip"
 
 # The original CMS signature was checked with .NET SignedCms.CheckSignature(true).
 # Signature-only verification succeeded; Windows could not build the Apple WWDR
@@ -131,13 +132,14 @@ def main() -> None:
     entries["ORIGIN.txt"] = origin
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(OUTPUT, "w") as archive:
+    with zipfile.ZipFile(OUTPUT, "w", compression=zipfile.ZIP_STORED) as archive:
         for name, data in sorted(entries.items()):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16
-            archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
-    print(f"{OUTPUT} ({OUTPUT.stat().st_size} bytes; 32 TLS root certificates)")
+            archive.writestr(info, data, compress_type=zipfile.ZIP_STORED)
+    TEST_OUTPUT.write_bytes(OUTPUT.read_bytes())
+    print(f"{OUTPUT} ({OUTPUT.stat().st_size} bytes; 32 TLS root certificates; stored entries)")
 
 
 if __name__ == "__main__":
