@@ -89,6 +89,10 @@ final class EmulationSession {
     private var runLoopHasFinished = false
     private var stateBeforeStorageFlushFailure: State?
     private var storageFlushError: String?
+    /// Captured at the exact kernel breakpoint before the CPU begins its
+    /// shutdown/restart path. This survives after RAM is released and is
+    /// appended to the exported diagnostics by `EmulatorCore`.
+    private(set) var stopDiagnostics: String?
     private let runLoopFinished = DispatchGroup()
     private var retired: UInt64 = 0
     private var virtualTime: UInt64 = 0
@@ -436,7 +440,15 @@ final class EmulationSession {
                 continue
             }
             if cpu.hitBreakpoint == Self.shutdownEntry {
-                finalState = cpu.registers[1] & Self.haltFlag != 0 ? .shutDown : .restarting
+                let howto = cpu.registers[1]
+                let action = howto & Self.haltFlag != 0 ? "shutdown" : "restart"
+                stopDiagnostics = [
+                    "Guest reached the iOS boot() \(action) path.",
+                    "Arguments: paniced=\(Self.hex(cpu.registers[0])) howto=\(Self.hex(howto)) command=\(Self.hex(cpu.registers[2])).",
+                    "CPU state: PC=\(Self.hex(cpu.registers.pc)) LR=\(Self.hex(cpu.registers.lr)) SP=\(Self.hex(cpu.registers.sp)) CPSR=\(Self.hex(cpu.cpsr.rawValue)).",
+                    "Progress: instructions=\(cpu.retiredInstructionCount) virtualTime=\(cpu.virtualTime) JIT=\(cpu.jit?.isAvailable == true ? "available" : "unavailable").",
+                ].joined(separator: " ")
+                finalState = action == "shutdown" ? .shutDown : .restarting
                 break
             }
             if let hit = cpu.hitBreakpoint, let register = Self.panicEntries[hit] {
@@ -483,6 +495,10 @@ final class EmulationSession {
         lock.unlock()
         runLoopFinished.leave()
         onFinish?(finalState)
+    }
+
+    private static func hex(_ value: UInt32) -> String {
+        "0x" + String(format: "%08X", value)
     }
 
     /// Kernel messages logged since the last call, read straight from the

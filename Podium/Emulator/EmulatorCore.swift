@@ -319,6 +319,7 @@ final class EmulatorCore {
             // the cause behind an endless sequence of Kernel screens.
             if !hadFinishedBoot {
                 status = .error("iOS restarted before finishing boot. Open Developer Settings to view the kernel log.")
+                if let details = finishedSession.stopDiagnostics { appendLog(details) }
                 appendLog("iOS requested a restart before finishing boot; automatic retry stopped.")
                 framebufferSource = nil
                 return
