@@ -78,6 +78,12 @@ final class RealDiskBootTests: XCTestCase {
         let installed=try RootFilesystemBuilder(volume:HFSPlusVolume(source:FileVolumeSource(url:image)))
         let sentinel="/private/var/mobile/Media/podium-upgrade-check.txt"
         try installed.addFile(sentinel,contents:Array("preserve guest data".utf8),template:"/private/etc/fstab")
+        let launchdConfigPath = "/private/etc/launchd.conf"
+        if installed.contains(launchdConfigPath) { try installed.remove(launchdConfigPath) }
+        let staleSubstrateHook = "bsexec .. /usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"
+        try installed.addFile(launchdConfigPath,
+                              contents: Array(("keep-existing-launchd-setting\n" + staleSubstrateHook + "\n").utf8),
+                              template: "/private/etc/fstab")
         try installed.remove(JailbreakBootstrap.markerPath)
         try installed.write(to:image.appendingPathExtension("upgrade-test"),freeSpace:8<<20,maximumVolumeBytes:FileBackedStorage.capacity)
         try FileManager.default.removeItem(at:image)
@@ -103,9 +109,9 @@ final class RealDiskBootTests: XCTestCase {
             XCTAssertTrue(upgraded.contains("/private/var/lib/dpkg/info/\(package).list"),
                           "dpkg must have the file list for \(package)")
         }
-        let launchdConfig = String(decoding: try upgraded.contents(of: "/private/etc/launchd.conf"), as: UTF8.self)
-        XCTAssertTrue(launchdConfig.contains("/usr/bin/cynject 1 /Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib"),
-                      "Substrate must be activated at guest boot")
+        let upgradedLaunchdConfig = String(decoding: try upgraded.contents(of: launchdConfigPath), as: UTF8.self)
+        XCTAssertTrue(upgradedLaunchdConfig.contains("keep-existing-launchd-setting"), "Upgrade must preserve unrelated launchd.conf settings")
+        XCTAssertFalse(upgradedLaunchdConfig.contains(staleSubstrateHook), "Upgrade must remove the unsupported Substrate boot hook")
         let kernel = try KernelcacheExtractor.extractKernelMachO(from: firmware, storedAt: ipsw)
         let tree = try DeviceTreeExtractor.extractDeviceTree(from: firmware, storedAt: ipsw)
         if FileManager.default.fileExists(atPath: ipsw.deletingLastPathComponent().appendingPathComponent("trace-buffer-mapping").path) {

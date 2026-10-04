@@ -231,22 +231,12 @@ existing_records = [
 ]
 payload_files[status_name] = ("\n\n".join(existing_records + installed_records) + "\n").encode()
 
-# Equivalent to MobileSubstrate's iOS 6 post-install launchd hook: at boot,
-# inject SubstrateLauncher into PID 1 so it can propagate MobileSubstrate to
-# processes started by launchd. The executable vendor maintainer script is
-# never run by the host or copied into the guest.
-substrate_launcher = (
-    "bsexec .. /usr/bin/cynject 1 "
-    "/Library/Frameworks/CydiaSubstrate.framework/Libraries/SubstrateLauncher.dylib\n"
-).encode()
-add_file("/private/etc/launchd.conf", substrate_launcher, 0o644, "mobilesubstrate")
-
 origin = (
     f"{BOOTSTRAP_URL}\nSHA256 {BOOTSTRAP_SHA256}\n"
     "Cydia: https://git.saurik.com/cydia.git\n"
     "Tweak packages (package: version; source; SHA-256):\n"
     + "\n".join(installed_packages)
-    + "\nMobileSubstrate post-install behavior is represented by the iOS 6 launchd.conf line above.\n"
+    + "\nThe tweak packages are installed into the guest filesystem. Automatic Substrate injection is disabled because this emulator's guest kernel rejects cynject against launchd.\n"
     "No package maintainer binaries are executed by the build host or guest.\n"
     "Package authors: Jay Freeman (Cydia Substrate/Safe Mode); Sam Bingner (PreferenceLoader).\n"
 )
