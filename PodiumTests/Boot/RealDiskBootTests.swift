@@ -147,7 +147,6 @@ final class RealDiskBootTests: XCTestCase {
         XCTAssertTrue(springBoardLibraries.contains(JailbreakBootstrap.substrateSpringBoardLibrary),
                       "The migrated guest must load Substrate into SpringBoard")
         let substrateMode = ProcessInfo.processInfo.environment["PODIUM_TEST_SUBSTRATE_MODE"] ?? "dyld_environment"
-        let testSubstrateInjection = substrateMode == "launchd" || substrateMode == "dyld_environment"
         XCTAssertTrue(["baseline", "launchd", "dyld_environment"].contains(substrateMode),
                       "Unknown Substrate boot mode: \(substrateMode)")
         if substrateMode == "baseline" || substrateMode == "launchd" {
@@ -170,6 +169,7 @@ final class RealDiskBootTests: XCTestCase {
             }
             return nil
         }()
+        let testSubstrateInjection = (substrateMode == "launchd" || substrateMode == "dyld_environment") && probeURL != nil
         if testSubstrateInjection {
             let probe = try XCTUnwrap(probeURL, "Substrate injection requested, but the probe dylib was not built or located.")
             try Self.installSubstrateProbe(probe, into: image)

@@ -65,7 +65,7 @@ targets:
     resources:
       - path: PodiumTests/Resources/ISRGRootX1.cer
       - path: PodiumTests/Resources/tlsroot-root-certificates.zip
-      - path: GuestTools/substrate_probe/build/PodiumInjectionProbe.bin
+      - path: PodiumTests/GeneratedResources/PodiumInjectionProbe.bin
     dependencies:
       - target: Podium
     settings:
@@ -84,6 +84,9 @@ schemes:
     test:
       targets:
         - PodiumTests
+      environmentVariables:
+        PODIUM_TEST_SUBSTRATE_MODE: dyld_environment
+        PODIUM_TEST_BOOT_ONLY: "1"
       commandLineArguments:
         "-PodiumUITesting": false
     run:
