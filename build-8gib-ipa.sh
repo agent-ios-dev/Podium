@@ -15,5 +15,5 @@ package_dir="$(mktemp -d "$PWD/build-8gib/package.XXXXXX")"
 trap 'rm -rf "$package_dir"' EXIT
 mkdir "$package_dir/Payload"
 ditto "$app" "$package_dir/Payload/Podium.app"
-ditto -c -k --keepParent "$package_dir/Payload" "$PWD/Podium-0.1.0-8GiB-unsigned.ipa"
-echo "Created $PWD/Podium-0.1.0-8GiB-unsigned.ipa; sign it with your sideloading tool before installing."
+ditto -c -k --keepParent "$package_dir/Payload" "$PWD/Podium-0.5.0-8GiB-unsigned.ipa"
+echo "Created $PWD/Podium-0.5.0-8GiB-unsigned.ipa; sign it with your sideloading tool before installing."

@@ -47,7 +47,7 @@ jobs:
           test_args=()
           if [ '${{ inputs.test_scope }}' = truststore ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests); fi
           if [ '${{ inputs.test_scope }}' = focused ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests -only-testing:PodiumTests/PersistentGuestStorageTests); fi
-          if [ '${{ inputs.test_scope }}' = release-check ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests -only-testing:PodiumTests/PersistentGuestStorageTests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreAndRussianLocale); fi
+          if [ '${{ inputs.test_scope }}' = release-check ]; then test_args=(-only-testing:PodiumTests/IOSRootCertificateInstallerTests -only-testing:PodiumTests/PersistentGuestStorageTests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreAndRussianLocale -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareBootWithFileBackedDisk); fi
           if [ '${{ inputs.test_scope }}' = reference-truststore ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreAndRussianLocale); fi
           if [ '${{ inputs.test_scope }}' = reference-inventory ]; then test_args=(-only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareTrustStoreInventory); fi
           if [ '${{ inputs.test_scope }}' = reference-boot ]; then test_args=(-only-testing:PodiumTests/PersistentGuestStorageTests -only-testing:PodiumTests/RealDiskBootTests/testReferenceFirmwareBootWithFileBackedDisk); fi
@@ -56,5 +56,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Podium-0.1.0-8GiB-unsigned
-          path: Podium-0.1.0-8GiB-unsigned.ipa
+          name: Podium-0.5.0-8GiB-unsigned
+          path: Podium-0.5.0-8GiB-unsigned.ipa
